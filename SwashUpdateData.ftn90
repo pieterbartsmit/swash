@@ -65,6 +65,7 @@ subroutine SwashUpdateData ( it )
     use m_genarr
     use SwashFlowdata
     use m_parall
+    use testing
 !
     implicit none
 !
@@ -156,12 +157,19 @@ subroutine SwashUpdateData ( it )
     logical               :: STPNOW   ! indicates that program must stop
     logical               :: vdir     ! indicates direction of in- or outcoming velocity on boundary
                                       ! =.true.; u-velocity
-                                      ! =.false.; v-velocity
+                                      ! =.false.; v-velocit
     !
     character(80)         :: msgstr   ! string to pass message
     !
     type(bfldat), pointer :: curbfl   ! current item in list of boundary condition file
     type(bfsdat), pointer :: curbfs   ! current item in list of Fourier series parameters
+    !*NEW*
+    real :: uso(1:kmax)
+    real :: vso(1:kmax)
+    real, dimension(0:kmax) :: ztmp
+    real, dimension(0:kmax) :: dwdx
+    real, dimension(0:kmax) :: dwdy
+
 !
 !   Structure
 !
@@ -614,7 +622,7 @@ subroutine SwashUpdateData ( it )
                       !
                       ! determine bound long wave, if appropriate
                       !
-                      if ( ibound == 1 .and. it == 0 ) call SwashBCboundwave ( curbfs, nfreq, xp, yp, i, swd, wdir, rsgn, vdir, shape, ibloc )
+                      !if ( ibound == 1 .and. it == 0 ) call SwashBCboundwave ( curbfs, nfreq, xp, yp, i, swd, wdir, rsgn, vdir, shape, ibloc )
                       !
                       if ( kmax == 1 .or. ihydro == 3 ) then
                          !
@@ -701,23 +709,34 @@ subroutine SwashUpdateData ( it )
                          !
                       else
                          !
-                         if ( oned ) then
+                         !
+                         uso = 0.
+                         vso = 0.
+                         if ( ibound == 1 ) then
                             !
-                            ! compute bound long wave, if appropriate (uniform distribution in vertical)
-                            !
-                            fvalbu = 0.
-                            !
-                            if ( ibound == 1 ) then
+                            if ( vdir ) then
                                !
-                               do j = 1, nfreq-1
-                                  !
-                                  omegab = curbfs%omega(j+1) - curbfs%omega(1)
-                                  !
-                                  fvalbu = fvalbu + real ( curbfs%fluxbu(i,j) / dep * exp( (0.,1.)*omegab*timco ) )
-                                  !
-                               enddo
+                               ztmp = zku( indx, 0 : kmax ) - zku(indx,kmax)
+                               !
+                            else
+                               !
+                               ztmp = zkv( indx, 0 : kmax ) - zkv(indx,kmax)
                                !
                             endif
+                            !
+                            call SwashBCboundwave (curbfs, nfreq, xp, yp, i, swd,&
+                                 wdir, rsgn, vdir, shape, ibloc,  uso, vso,dwdx, dwdy, it , ztmp,dep, .false.  )
+                            !
+                            ! Note: technically we need to update w1 and not enforce dwdx=0 (neumann) in the flow routines.
+                            ! Here we enforce dwdx at t+dt at t; this is going to introduce a very minor error
+                            ! dt*dwdxdt likely at a higher order in the solutions and can be neglected unless dt is large.
+                            !
+                            w0( indx , : ) = w0( indxu,: ) - dwdx * dx
+                            !
+                         endif
+                         !
+                         
+                         if ( oned ) then
                             !
                             do k = 1, kmax
                                !
@@ -752,31 +771,17 @@ subroutine SwashUpdateData ( it )
                                   !
                                enddo
                                !
-                               fvalu = fsmo * ( fvalu + fvalbu )
+                         
+                               fvalu = fsmo *  fvalu + fsmo**2 * uso(k) 
                                !
+
                                u1(indx,k) = u1(indx,k) + rsgn * wf * fvalu
                                !
                             enddo
                             !
                          else
                             !
-                            ! compute bound long wave, if appropriate (uniform distribution in vertical)
-                            !
-                            fvalbu = 0.
-                            fvalbv = 0.
-                            !
-                            if ( ibound == 1 ) then
-                               !
-                               do j = 1, nfreq-1
-                                  !
-                                  omegab = curbfs%omega(j+1) - curbfs%omega(1)
-                                  !
-                                  fvalbu = fvalbu + real ( curbfs%fluxbu(i,j) / dep * exp( (0.,1.)*omegab*timco ) )
-                                  fvalbv = fvalbv + real ( curbfs%fluxbv(i,j) / dep * exp( (0.,1.)*omegab*timco ) )
-                                  !
-                               enddo
-                               !
-                            endif
+
                             !
                             do k = 1, kmax
                                !
@@ -816,8 +821,8 @@ subroutine SwashUpdateData ( it )
                                   !
                                enddo
                                !
-                               fvalu = fsmo * ( fvalu + fvalbu )
-                               fvalv = fsmo * ( fvalv + fvalbv )
+                               fvalu = fsmo * ( fvalu + uso(k) )
+                               fvalv = fsmo * ( fvalv + vso(k) )
                                !
                                utmp(k) = utmp(k) + wf * fvalu
                                vtmp(k) = vtmp(k) + wf * fvalv
@@ -1071,7 +1076,7 @@ subroutine SwashUpdateData ( it )
                       !
                       ! determine bound long wave, if appropriate
                       !
-                      if ( ibound == 1 .and. it == 0 ) call SwashBCboundwave ( curbfs, nfreq, xp, yp, i, swd, wdir, rsgn, vdir, shape, ibloc )
+                      !@P if ( ibound == 1 .and. it == 0 ) call SwashBCboundwave ( curbfs, nfreq, xp, yp, i, swd, wdir, rsgn, vdir, shape, ibloc )
                       !
                       if ( kmax == 1 .or. ihydro == 3 ) then
                          !
@@ -1095,20 +1100,27 @@ subroutine SwashUpdateData ( it )
                                !
                             enddo
                             !
-                            ! add bound long wave, if appropriate
                             !
+                            uso = 0.
+                            vso = 0.
                             if ( ibound == 1 ) then
                                !
-                               do j = 1, nfreq-1
+                               if ( vdir ) then
                                   !
-                                  omegab = curbfs%omega(j+1) - curbfs%omega(1)
+                                  ztmp = hu( indx )
                                   !
-                                  fvalu = fvalu + real ( ( curbfs%fluxbu(i,j) / dep + sqrt( grav / dep ) * curbfs%zetab(i,j) ) * exp( (0.,1.)*omegab*timco ) )
+                               else
                                   !
-                               enddo
+                                  ztmp = hv(indx)
+                                  !
+                               endif
+                               !
+                               call SwashBCboundwave (curbfs, nfreq, xp, yp, i, swd,&
+                                    wdir, rsgn, vdir, shape, ibloc,  uso, vso,dwdx, dwdy, it , ztmp,dep, .true.  )
                                !
                             endif
                             !
+
                             u1(indx,:) = u1(indx,:) + rsgn * wf * ( fsmo * fvalu - sqrt( grav / hu(indx) ) * s0(indxs) )
                             !
                          else
@@ -1173,23 +1185,30 @@ subroutine SwashUpdateData ( it )
                          !
                       else
                          !
+                         uso = 0.
+                         vso = 0.
+                         if ( ibound == 1 ) then
+                            !
+                            if ( vdir ) then
+                               !
+                               ztmp = zku( indx, 0 : kmax ) - zku(indx,kmax)
+                               !
+                            else
+                               !
+                               ztmp = zkv( indx, 0 : kmax ) - zkv(indx,kmax)
+                               !
+                            endif
+                            !
+                            call SwashBCboundwave (curbfs, nfreq, xp, yp, i, swd,&
+                                 wdir, rsgn, vdir, shape, ibloc,  uso, vso,dwdx, dwdy, it , ztmp,dep, .true.  )
+                            !
+                         endif
+                         !
                          if ( oned ) then
                             !
                             ! compute bound long wave, if appropriate (uniform distribution in vertical)
                             !
-                            fvalbu = 0.
                             !
-                            if ( ibound == 1 ) then
-                               !
-                               do j = 1, nfreq-1
-                                  !
-                                  omegab = curbfs%omega(j+1) - curbfs%omega(1)
-                                  !
-                                  fvalbu = fvalbu + real ( ( curbfs%fluxbu(i,j) / dep + sqrt( grav / dep ) * curbfs%zetab(i,j) ) * exp( (0.,1.)*omegab*timco ) )
-                                  !
-                               enddo
-                               !
-                            endif
                             !
                             do k = 1, kmax
                                !
@@ -1224,7 +1243,7 @@ subroutine SwashUpdateData ( it )
                                   !
                                enddo
                                !
-                               fvalu = fsmo * ( fvalu + fvalbu )
+                               fvalu = fsmo * ( fvalu + fvalbu + uso(k) )
                                !
                                u1(indx,k) = u1(indx,k) + rsgn * wf * ( fvalu - sqrt( grav / hu(indx) ) * s0(indxs) )
                                !
@@ -1234,26 +1253,6 @@ subroutine SwashUpdateData ( it )
                             !
                             ! compute bound long wave, if appropriate (uniform distribution in vertical)
                             !
-                            fvalbu = 0.
-                            fvalbv = 0.
-                            !
-                            if ( ibound == 1 ) then
-                               !
-                               do j = 1, nfreq-1
-                                  !
-                                  omegab = curbfs%omega(j+1) - curbfs%omega(1)
-                                  !
-                                  if ( vdir ) then
-                                     fvalbu = fvalbu + real ( ( curbfs%fluxbu(i,j) / dep + rsgn * sqrt( grav / dep ) * curbfs%zetab(i,j) ) * exp( (0.,1.)*omegab*timco ) )
-                                     fvalbv = fvalbv + real ( ( curbfs%fluxbv(i,j) / dep                                                 ) * exp( (0.,1.)*omegab*timco ) )
-                                  else
-                                     fvalbu = fvalbu + real ( ( curbfs%fluxbu(i,j) / dep                                                 ) * exp( (0.,1.)*omegab*timco ) )
-                                     fvalbv = fvalbv + real ( ( curbfs%fluxbv(i,j) / dep + rsgn * sqrt( grav / dep ) * curbfs%zetab(i,j) ) * exp( (0.,1.)*omegab*timco ) )
-                                  endif
-                                  !
-                               enddo
-                               !
-                            endif
                             !
                             do k = 1, kmax
                                !
@@ -1298,8 +1297,8 @@ subroutine SwashUpdateData ( it )
                                   !
                                enddo
                                !
-                               fvalu = fsmo * ( fvalu + fvalbu )
-                               fvalv = fsmo * ( fvalv + fvalbv )
+                               fvalu = fsmo * ( fvalu + fvalbu + uso(k) )
+                               fvalv = fsmo * ( fvalv + fvalbv + vso(k) )
                                !
                                if ( vdir ) then
                                   utmp(k) = utmp(k) + wf * ( fvalu - rsgn * sqrt( grav / hu(indx ) ) * s0(indxs) )

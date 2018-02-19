@@ -244,12 +244,13 @@ subroutine SwashBCspecfile ( filenm, lbfs, lbgp, nbps, bpix, bpiy, xcgrid, ycgri
           allocate(bfstmp%phase(nfreq))
           allocate(bfstmp%theta(nfreq))
           call random_seed(put=seed)
+
           do j = 1, nfreq
              bfstmp%ampl (j) = currf%ampl * sqrt(df)
              bfstmp%omega(j) = currf%omega
              call random_number(rval)
              bfstmp%phase(j) = 2.*pi*rval
-             bfstmp%theta(j) = 0.          ! no directional spreading
+             bfstmp%theta(j) = 0.          ! no directional spreading             
              currf => currf%nextfs
           enddo
           deallocate(tmpf)

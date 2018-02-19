@@ -1,4 +1,4 @@
-subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vdir, shape, ibloc )
+subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vdir, shape, ibloc,uso, vso,dwdx,dwdy,  it , z,dep , weaklyreflective )
 !
 !   --|-----------------------------------------------------------|--
 !     | Delft University of Technology                            |
@@ -54,11 +54,312 @@ subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
     use ocpcomm4
     use SwashCommdata3
     use m_bndspec
+    use SwashTimecomm
 !
     implicit none
 !
 !   Argument variables
+    !   
+    integer, intent(in)         :: ibgrpt           ! actual boundary grid point
+    integer, intent(in)         :: ibloc            ! actual counter for boundary point
+    integer, intent(in)         :: nfreq            ! number of frequencies
+    integer, intent(in)         :: shape            ! spectral shape
+                                                    ! = 1; Pierson Moskowitz
+                                                    ! = 2; Jonswap
+                                                    ! = 3; TMA
+    integer, intent(in)         :: it    
+    !
+    real, intent(in)            :: rsgn             ! sign for indicating in- and outflowing depending on boundary
+                                                    ! =+1; refers to inflowing at left and lower boundaries
+                                                    ! =-1; refers to outflowing at right and upper boundaries
+    real, intent(in)            :: swd              ! still water depth
+    real, intent(in)            :: wdir             ! incident or peak wave direction with respect to problem coordinates
+    real, intent(in)            :: xp               ! x-coordinate of grid point
+    real, intent(in)            :: yp               ! y-coordinate of grid point
+    real, intent(out)           :: uso( 1 : kmax)   ! Second-order u-velocity
+    real, intent(out)           :: vso( 1 : kmax)   ! Second-order v-velocity 
+    real, intent(out)           :: dwdx( 0 : kmax)  ! Spatial vertical velocity gradient
+    real, intent(out)           :: dwdy( 0 : kmax)  ! Spatial vertical velocity gradient    
+    real, intent(in)            :: z(0:kmax)        ! Vertical coordinates of the grid        
+    real, intent(in)            :: dep              ! The still-water depth
+    !
+    logical, intent(in)         :: vdir             ! indicates direction of in- or outcoming velocity on boundary
+                                                    ! =.true.; u-velocity
+                                                    ! =.false.; v-velocity
+    logical,intent(in)          :: weaklyreflective ! indicates whether or not we have a weakly reflective boundary condition
+                                                    ! =.true.; weakly reflective
+                                                    ! =.false.; fully reflective
+    !
+    type(bfsdat), intent(inout) :: bcfour ! list containing parameters for Fourier series
+
 !
+!   Parameters
+!
+
+    real, parameter :: khmin = 0.4 ! minimum dimensionless depth
+    real, parameter :: khmax = 10. ! maximum dimensionless depth    
+!
+!   Local variables
+!
+    integer, save    :: ient  = 0     ! number of entries in this subroutine
+    integer          :: j             ! loop counter
+    integer          :: k             ! loop counter
+    integer          :: l             ! frequency index of bound long wave
+    integer          :: nfreqso       ! Total number of interacting frequencies (super + sub harmonics)
+    integer          :: nsum          ! Number of sum frequencies
+    integer          :: ndif          ! Number of difference frequencies
+    integer          :: jpnt          ! linear index for location of layer/frequency
+    real             :: domega        ! Angular frequency resolution
+    real             :: omegab        ! Angular frequency resolution    
+    real             :: dz(kmax)      ! Layer thickness
+    real             :: sigma(0:kmax) ! sigma-coordinate (sigma = 0 surface, -1 bottom)
+    real             :: kwav          ! wave number
+    real             :: omega         ! angular frequency
+    real             :: amp           ! amplitude
+    real,allocatable :: sh(:)         ! Contains depth dependency ( = sinh( kh(1+sigma) / cosh(kh) )
+    real             :: s             ! sign
+    complex          :: tfac          ! Complex time factor
+    
+    !
+!
+!   Structure
+!
+!   Description of the pseudo code
+    !
+    !   (0) Preliminaries
+    !   (1) If this is the first "timestep", calculate the bound response for each layer
+    !   (2) Use calculated coeficients to synt. bound response
+    !   (3) Calculate dwdx/dwdy from a linear synthesis
+    !   (4) return
+    !
+!   Source text
+    !
+
+    !
+    ! (0) Some preliminary calculations...
+    !----------------------------------------------------------------    
+    if ( nfreq == 1 ) then
+       !
+       domega = bcfour%omega(1)
+       !
+    else
+       !       
+       domega = ( bcfour%omega(2) - bcfour%omega(1) )
+       !
+    endif
+    nsum    =  nint( (2.*bcfour%omega(nfreq) - 2.*bcfour%omega(1))/domega + 1 )
+    ndif    =  nint( (bcfour%omega(nfreq) - bcfour%omega(1))/domega + 1 )
+    nfreqso =  nsum + ndif
+    !
+    !
+    ! (1) Calculate the bound amplitudes for *each* layer
+    !----------------------------------------------------------------
+    ! The bound wave solution for the discharges is expressed in "sigma" coordinates (Smit et al. 2017)
+    ! calculate sigma coordinates for levels  (is also used later for calculating dwdx/dwdy)
+    !
+    sigma = (z - z(0)) / dep
+    !
+    if (it < 1) then
+       !
+
+       !
+       call SwashBCboundwave_init( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vdir, shape, ibloc,  sigma )
+       !
+    endif
+    !
+    ! (2) Synt. the results
+    !----------------------------------------------------------------
+    ! For each velocity layer we sum all the bound wave contributions
+    !        
+    dz =  - z( 1 : kmax ) + z( 0 : kmax - 1)
+    !
+    uso = 0.
+    vso = 0.
+    do j = 1, nfreqso
+       !
+       ! For each frequency calculate the bound frequency
+       !
+       if ( j <= ndif ) then
+          !
+          ! Difference interactions
+          !
+          omegab = bcfour%omega(j) - bcfour%omega(1)
+          !
+       else
+          !
+          ! Sum interactions
+          !
+          omegab = ( j - ndif - 1 )* domega + 2. * bcfour%omega(1)
+          !
+       endif
+       tfac   = exp( (0.,1.)*omegab*timco )
+       !
+       ! And add the layer contribution
+       !
+       do k = 1 , kmax
+          !
+          jpnt = k + (j-1) * kmax
+          uso(k) = uso(k) + real( bcfour%fluxbu(ibgrpt,jpnt ) * tfac / dz(k) )
+          vso(k) = vso(k) + real( bcfour%fluxbv(ibgrpt,jpnt ) * tfac / dz(k) ) 
+          !
+       enddo !layer loop
+       !
+       ! if weakly reflective, add the contribution to the sec. order surface elevation, assumed depth uniform
+       !
+       if (weaklyreflective) then
+          !
+          if (vdir) then
+             !
+             uso = uso + rsgn * real( sqrt( grav / dep ) * bcfour%zetab(ibgrpt,j) * tfac )
+             !
+          else
+             !
+             vso = vso + rsgn * real( sqrt( grav / dep ) * bcfour%zetab(ibgrpt,j) * tfac )
+             !
+          endif
+          !
+       endif
+       !
+    enddo !frequency loop
+    !
+    ! (3) Calculate dwdx/dwdy
+    !----------------------------------------------------------------
+    !
+    if ( vdir ) then
+       !
+       if ( .not. sin(wdir) < 0. ) then
+          !
+          s = +1.
+          !
+       else
+          !
+          s = -1.
+          !
+       endif
+       !
+    else
+       !
+       if ( .not. cos(wdir) < 0. ) then
+          !
+          s = +1.
+          !
+       else
+          !
+          s = -1.
+          !
+       endif
+       !
+    endif
+    !
+    ! Allocate the work vector sh that contains the depth dependency
+    !
+    allocate( sh( 0:kmax ) )
+    !
+    !
+    ! synthesize time series
+    !
+    dwdx = 0.
+    dwdy = 0.
+    do j = 1 , nfreq 
+       !
+       omega = bcfour%omega(j)
+       kwav  = bcfour%kwave(ibgrpt,j)
+       !
+       if ( kwav * dep > khmax ) then
+          !
+          ! Use deepwater approximation
+          !
+          sh = exp( - kwav*dep * sigma )
+          !
+       else
+          !
+          ! Intermediate/shallow water approximation
+          !
+          sh = sinh( kwav*dep * (1. - sigma ) ) / cosh( kwav*dep )
+          !
+       endif
+       !
+       amp = bcfour%comp1(ibgrpt,j) * cos( omega*timco ) + bcfour%comp2(ibgrpt,j) *sin( omega*timco )
+       !
+       dwdx = dwdx + amp * kwav**2 * grav * sh / omega * cos( wdir + s*bcfour%theta(j) )
+       dwdy = dwdy + amp * kwav**2 * grav * sh / omega * sin( wdir + s*bcfour%theta(j) )     
+       !
+    enddo
+    !
+  end subroutine SwashBCboundwave
+
+
+subroutine SwashBCboundwave_init( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vdir, shape, ibloc,  sigma )
+!
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering                              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmers: The SWASH team                               |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2017  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!   Authors
+!
+!    1.00: Dirk Rijnsdorp
+!
+!   Updates
+!
+!    1.00, October 2012: New subroutine
+!
+!   Purpose
+!
+!   Computes second order bound long wave to be added to Fourier series along open boundaries
+!
+!   Method
+!
+!
+!   Updates
+!
+!    1.00, October 2012: New subroutine
+!
+!   Purpose
+!
+!   Computes second order bound long wave to be added to Fourier series along open boundaries
+!
+!   Method
+!
+!   Details on the computation of the interaction coefficient of two primary wave components can be found in
+!
+!   Smit, Janssen, Herbers, 2017, JPO (?)
+!
+!   Modules used
+!
+    use ocpcomm4
+    use SwashCommdata3
+    use m_bndspec
+!
+    implicit none
+!
+!   Argument variables
+    !
     integer, intent(in)         :: ibgrpt ! actual boundary grid point
     integer, intent(in)         :: ibloc  ! actual counter for boundary point
     integer, intent(in)         :: nfreq  ! number of frequencies
@@ -79,7 +380,9 @@ subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
                                           ! =.true.; u-velocity
                                           ! =.false.; v-velocity
     !
-    type(bfsdat), intent(inout) :: bcfour ! list containing parameters for Fourier series
+    type(bfsdat), intent(inout) :: bcfour            ! list containing parameters for Fourier series
+    real, intent(inout)         :: sigma( 0 : kmax ) ! sigma coordinate of each layer ( = 0 equals surface, = - 1 = bottom) 
+
 !
 !   Parameter variables
 !
@@ -87,28 +390,33 @@ subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
     real, parameter :: khmax = 10. ! maximum dimensionless depth
 !
 !   Local variables
-!
+!    
     integer, save :: ient  = 0    ! number of entries in this subroutine
-    integer, save :: inext = 0    ! wait for next boundary point to allocate
+    integer, save :: inext = 0    ! wait for next boundary point to allocate    
     integer       :: j            ! loop counter
     integer       :: k            ! loop counter
     integer       :: l            ! frequency index of bound long wave
+    integer       :: ik           ! loop counter over layers    
+    integer       :: lrel         ! = ik + (l-1)*kmax  ,linear frequency/layer index of bound long wave
+    integer       :: nsum         ! Number of super-harmonics
+    integer       :: ndif         ! Number of sub-harmonics
+    integer       :: nfreqso      ! Total number of bound frequencies (super + sub harmonics)
+    integer       :: isignindex   ! a signindex index
+    integer       :: imeanflow    ! type of mean flow included in the approxiation
+    !
+    logical       :: self    
+    !
+    complex       :: campl1       ! Complex amplitude of first primary wave component
+    complex       :: campl2       ! Complex amplitude of second primary wave component
+    complex       :: campl3       ! Complex amplitude of bound long wave component
     !
     real          :: ampl1        ! amplitude of first primary wave component
     real          :: ampl2        ! amplitude of second primary wave component
     real          :: ampl3        ! amplitude of bound long wave component
-    real          :: cg3          ! group velocity of bound long wave
-    real          :: cosdt        ! cosine of difference angles of primary waves
-    real          :: df           ! increment in frequency space
-    real          :: Dp           ! interaction coefficient for second order potential amplitude as given by Eq. (4.3) of Hasselmann (1962)
-    real          :: Dz           ! interaction coefficient for second order surface elevation amplitude as given by Eq. (4.2) of Hasselmann (1962)
-    real          :: f1           ! frequency of first primary wave component
-    real          :: f2           ! frequency of second primary wave component
-    real          :: f3           ! frequency of bound long wave component
+    real          :: domega       ! increment in frequency space
     real          :: kwav1        ! wave number of first primary wave component
     real          :: kwav2        ! wave number of second primary wave component
     real          :: kwav3        ! wave number of bound long wave component
-    real          :: n            ! ratio of group and phase velocity
     real          :: omega1       ! angular frequency of first primary wave component
     real          :: omega2       ! angular frequency of second primary wave component
     real          :: phase1       ! phase of first primary wave component
@@ -116,22 +424,71 @@ subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
     real          :: phase3       ! phase of bound long wave component
     real          :: rval         ! auxiliary real
     real          :: s            ! sign
-    real          :: T1           ! first term of right-hand side of Eq. (4.2) of Hasselmann (1962)
-    real          :: T2           ! second term of right-hand side of Eq. (4.2) of Hasselmann (1962)
     real          :: theta1       ! wave direction of first primary wave component
     real          :: theta2       ! wave direction of second primary wave component
-    real          :: theta3       ! wave direction of bound long wave component
-!
-!   Structure
-!
-!   Description of the pseudo code
-!
-!   Source text
-!
+    real          :: signindex(2) ! = [ 1. , - 1.]  signindex 
+    real          :: k1(2)        ! wavenumber vector of first component
+    real          :: k2(2)        ! wavenumber vector of second component
+    real          :: k12          ! innerproduct of k1 and k2
+    real          :: ksum(2)      ! = k1 +/- k2, sum/difference vector
+    real          :: omegasum     ! = omega1 +/- omega2, sum/difference frequency
+    real          :: n            ! ratio between group velocity and wave celerity
+    real          :: IcoefZ       ! = interaction coeficient to relate a pair of forcing waves to the bound surface response    
+    real          :: IcoefQ(2,0:kmax) ! = interaction coeficient to relate a pair of forcing waves to the bound discharge response
+    !
+    ! Allocatable work arrays
+    !
+    complex,allocatable :: campl(:)  ! Complex amplitude vector    
+    real,allocatable    :: ch(:,:)   ! cosh vertical dependency of the solutions in sigma coordinates (see below eq. 6 in SJH2017)
+    real,allocatable    :: sh(:)     ! sinh vertical dependency of the solutions in sigma coordinates (see below eq. 6 in SJH2017)    
+    real,allocatable    :: kvec(:,:) ! wavenumber vector of second component
+    real,allocatable    :: kwav(:)   ! wavenumbers        
+    !
+    ! START IMPLEMENTATION
+    !-------------------------
+    !
     if (ltrace) call strace (ient,'SwashBCboundwave')
     !
-    ! direction of each wave component in line with incident direction
+    ! 1) initialization etc.
+    !----------------------------
+
+    ! Calculate the angular frequency increment
+
+    if ( nfreq == 1 ) then
+       !
+       ! For a single component it is just a classical stokes wave, frequency increment
+       ! is equal to the frequency (note, there are zero contributions).
+       !
+       domega = bcfour%omega(1)
+       !
+    else
+       !
+       domega = ( bcfour%omega(2) - bcfour%omega(1) )
+       !
+    endif
+
+
+
+    ! Calculate the number of super harmonics
+    nsum    =  nint( (2.*bcfour%omega(nfreq) - 2.*bcfour%omega(1))/domega + 1 )
+
+    ! Calculate the number of sub-harmonics
+    ndif    =  nint( (bcfour%omega(nfreq) - bcfour%omega(1))/domega + 1 )
+
+    ! Calculate the total number of bound components
+    nfreqso =  nsum + ndif    
+    !
+    ! 1.A) Allocate some work arrays
+    !
+    allocate(    ch( 0:kmax , 2     ) )
+    allocate(    sh( 0:kmax         ) )
+    allocate(  kvec( 2      , nfreq ) )    
+    allocate( campl( nfreq          ) )
+    allocate(  kwav( nfreq          ) )    
+    !
+    ! 1.B) direction of each wave component in line with incident direction
     ! in order to preserve symmetry at boundaries
+    !   
     !
     if ( vdir ) then
        if ( .not. sin(wdir) < 0. ) then
@@ -147,11 +504,13 @@ subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
        endif
     endif
     !
+    ! 1.C) Allocate the arrays storing the boundary on first entry of bloc
+    !
     if ( inext < ibloc ) then
        !
-       allocate(bcfour%zetab (nbgrpt,nfreq))
-       allocate(bcfour%fluxbu(nbgrpt,nfreq))
-       allocate(bcfour%fluxbv(nbgrpt,nfreq))
+       allocate(bcfour%zetab (nbgrpt,nfreqso))
+       allocate(bcfour%fluxbu(nbgrpt,nfreqso * kmax))
+       allocate(bcfour%fluxbv(nbgrpt,nfreqso * kmax))
        !
        bcfour%zetab  = (0.,0.)
        bcfour%fluxbu = (0.,0.)
@@ -161,29 +520,30 @@ subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
        !
     endif
     !
-    df = ( bcfour%omega(2) - bcfour%omega(1) ) / pi2
+    ! 1.D) Misc.
     !
-    floop: do j = 1, nfreq
-       !
-       ! get first primary wave component
+    ! Calculate the ang. frequency stepsize
+
+    !
+    ! Set signindices
+    signindex = [ -1. , 1.   ]
+    !
+    ! 2) Calculate the complex amplitudes and wavenumber vectors of the primary waves
+    !----------------------------------------------------------------------------------
+    !
+    do j = 1, nfreq
        !
        ampl1  = bcfour%ampl (j)
        omega1 = bcfour%omega(j)
        phase1 = bcfour%phase(j)
-       !
        theta1 = wdir + s*bcfour%theta(j)
-       !
-       ! calculate frequency of this first component
-       !
-       f1 = omega1 / pi2
-       !
-       ! calculate wave number of this component
-       !
+
        call disprel ( swd, omega1, kwav1, rval, n )
        !
        ! correct amplitude in case of TMA spectrum for shallow water
        !
        if ( shape == 3 ) ampl1 = ampl1 * omega1 * omega1 / ( grav * kwav1 * sqrt(2.*n) )
+       !
        !
        ! in case of periodicity, wave direction must be corrected so that wave number is an integer multiple of 2pi/length with length the periodicity length
        !
@@ -211,165 +571,525 @@ subroutine SwashBCboundwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
           !
        endif
        !
+       kvec( : , j ) = [ kwav1 * cos(theta1), kwav1 * sin(theta1) ]
+       kwav( j )     = kwav1
+       campl(j) = ampl1  * exp( -1. * (0. , 1.) * (phase1 + kvec(1,j) * xp + kvec(2,j) * yp) )
+
+       !
+       !
        ! check this direction with respect to the normal of boundary
        ! (must be within -80 degrees to 80 degrees)
        !
        if ( vdir ) then
           if ( rsgn == 1. ) then
-             if ( cos(theta1) <  0.174 ) cycle floop
+             if ( cos(theta1) <  0.174 ) campl(j) = ( 0. , 0.)
           else
-             if ( cos(theta1) > -0.174 ) cycle floop
+             if ( cos(theta1) > -0.174 ) campl(j) = ( 0. , 0.)
           endif
        else
           if ( rsgn == 1. ) then
-             if ( sin(theta1) <  0.174 ) cycle floop
+             if ( sin(theta1) <  0.174 ) campl(j) = ( 0. , 0.)
           else
-             if ( sin(theta1) > -0.174 ) cycle floop
+             if ( sin(theta1) > -0.174 ) campl(j) = ( 0. , 0.)
           endif
+       endif
+       !
+    enddo
+    !
+    !
+    ! For each frequency get the primary pair and
+    !
+    floop: do j = 1, nfreq
+       !
+       ! get first primary wave component
+       !
+       campl1  = campl(j)
+       omega1 = bcfour%omega(j)
+       kwav1  = kwav(j)
+       ampl1  = abs(campl1)
+       k1     = kvec(:,j)
+       !       
+       !
+       ! Calculate the depth dependency
+       !
+       if ( kwav1 * swd < 5. ) then
+          !
+          ch( : , 1) = cosh( ( 1 + sigma ) * kwav1 * swd ) / cosh( kwav1 * swd )
+          !
+       else
+          !
+          ch( : , 1) = exp( sigma * kwav1 * swd )
+          !
        endif
        !
        if ( kwav1*swd > khmin .and. kwav1*swd < khmax .and. ampl1 /= 0. ) then
           !
-          sloop: do k = j+1, nfreq
+          sloop: do k = j, nfreq
              !
              ! get second primary wave component
              !
-             ampl2  = bcfour%ampl (k)
-             omega2 = bcfour%omega(k)
-             phase2 = bcfour%phase(k)
+             campl2  = campl(k)
+             kwav2  = kwav(k)
+             ampl2  = abs(campl2)
              !
-             theta2 = wdir + s*bcfour%theta(k)
-             !
-             ! calculate frequency of this second component
-             !
-             f2 = omega2 / pi2
-             !
-             ! calculate wave number of this component
-             !
-             call disprel ( swd, omega2, kwav2, rval, n )
-             !
-             ! correct amplitude in case of TMA spectrum for shallow water
-             !
-             if ( shape == 3 ) ampl2 = ampl2 * omega2 * omega2 / ( grav * kwav2 * sqrt(2.*n) )
-             !
-             ! in case of periodicity, wave direction must be corrected so that wave number is an integer multiple of 2pi/length with length the periodicity length
-             !
-             if ( bcperx ) then
+             if ( kwav2 * swd < 5. ) then
                 !
-                rval = nint( kwav2*cos(theta2) / ( pi2/xclen ) ) * pi2/xclen / kwav2
-                if ( rval > 1. ) then
-                   theta2 = acos ( rval - pi2/xclen / kwav2 )
-                else if ( rval < -1. ) then
-                   theta2 = acos ( rval + pi2/xclen / kwav2 )
-                else
-                   theta2 = acos ( rval )
-                endif
+                ch( : , 2) = cosh( ( 1 + sigma ) * kwav2 * swd ) / cosh( kwav2 * swd )
                 !
-             else if ( bcpery ) then
-                !
-                rval = nint( kwav2*sin(theta2) / ( pi2/yclen ) ) * pi2/yclen / kwav2
-                if ( rval > 1. ) then
-                   theta2 = asin ( rval - pi2/yclen / kwav2 )
-                else if ( rval < -1. ) then
-                   theta2 = asin ( rval + pi2/yclen / kwav2 )
-                else
-                   theta2 = asin ( rval )
-                endif
-                !
-             endif
-             !
-             ! check this direction with respect to the normal of boundary
-             ! (must be within -80 degrees to 80 degrees)
-             !
-             if ( vdir ) then
-                if ( rsgn == 1. ) then
-                   if ( cos(theta2) <  0.174 ) cycle sloop
-                else
-                   if ( cos(theta2) > -0.174 ) cycle sloop
-                endif
              else
-                if ( rsgn == 1. ) then
-                   if ( sin(theta2) <  0.174 ) cycle sloop
-                else
-                   if ( sin(theta2) > -0.174 ) cycle sloop
-                endif
+                !
+                ch( : , 2) = exp( sigma * kwav2 * swd )
+                !
              endif
              !
              if ( kwav2*swd > khmin .and. kwav2*swd < khmax .and. ampl2 /= 0. ) then
+                ! 
+                ! Calculate the sum and difference components
+                !             
+                do isignindex = 1 , 2
+                   !
+                   k2      = kvec(:,k) * signindex( isignindex )
+                   omega2 = bcfour%omega(k) * signindex( isignindex )
+
+                   omegasum = omega1 + omega2                   
+                   ksum = k1 + k2
+                   k12  = ( k1(1) * k2(1) + k1(2) * k2(2) )
+                   kwav3 = sqrt( ksum(1)**2 + ksum(2)**2 )
+                   !
+                   if ( kwav3 * swd < 5. ) then
+                      !
+                      sh( : ) = sinh( ( 1 + sigma ) * kwav3 * swd ) / cosh( kwav3 * swd )
+                      !
+                   else
+                      !
+                      sh( : ) = exp( sigma * kwav3 * swd )
+                      !
+                   endif
+                   !                  
+                   !
+                   ! For difference interactions we consider the conjugate; NOTE - since 
+                   ! omegasum is always negative for difference interactions, we have to take
+                   ! the conjugate of the FIRST amplitude to corresponde to the positive frequeny
+                   ! contribution
+                   !
+                   if (signindex(isignindex) < 0.) then
+                      !
+                      campl3 = conjg(campl1) * campl2
+                      !
+                   else
+                      !
+                      campl3 = campl1 * campl2
+                      !
+                   endif
+                   !
+
+                   !
+                   if ( k == j ) then
+                      !
+                      ! All contributions are present twice, except along the diagonal
+                      !
+                      campl3 = campl3 * 0.5
+                      !
+                   endif
+                   !
+                   ! Calculate the surface interaction coef.
+                   !
+                   self = k==j
+                   imeanflow = 0                 
+                   call so_sur( IcoefZ , omega1 , omega2 , kwav1,kwav2,kwav3,k12, grav , swd, self, iMeanFlow )
+                   !
+                   ! Calculate the linear index for the frequencies: the first 1 to ndif frequencies
+                   ! are difference frequencies, the next ndif+1 : ndif+nsum are sum frequencies
+                   !
+                   if ( signindex(isignindex) < 0 ) then
+                      !
+                      l = min( nint( abs(omegasum) /domega ) + 1,ndif)
+                      !
+                   else
+                      !
+                      l = min( nint( (omegasum - 2*bcfour%omega(1))  /domega ) + 1,nsum) + ndif
+                      !
+                   endif
+                   !
+                   ! Calculate the sec-order surface amplitude
+                   !
+                   bcfour%zetab(ibgrpt,l) = bcfour%zetab(ibgrpt,l) + campl3 * IcoefZ
+                   !
+                   ! The so_Q interaction coeficients give the discharge through a vertical plane between
+                   ! the bed (at sigma = - 1) and the actual height (sigma). Hence, the discharge through
+                   ! a layer between sigma(ik) and sigma(ik+1) is icoefQ(ik) - icoefQ(ik+1)
+                   !
+                   call so_Q( IcoefQ( 1, kmax ) , omega1 , omega2 , k1 , k2 ,ksum,kwav1,kwav2,kwav3,k12, &
+                        sh( kmax ),ch( kmax , 1),ch( kmax , 2), sigma(kmax) , grav , swd, &
+                        self , imeanflow )
+                   !
+                   do ik = kmax-1 , 0 , -1
+                      !
+                      ! For historical reasons, we use a linear index lrel here to store the l'th frequency component
+                      ! of the ik'th layer.
+                      !
+                      lrel = (ik + 1) + (l-1) * kmax
+                      !
+                      ! Calculate the interaction coef.
+                      ! 
+                      call so_Q( IcoefQ( 1, ik ) , omega1 , omega2 , k1 , k2 ,ksum,kwav1,kwav2,kwav3,k12, &
+                           sh( ik ),ch( ik , 1),ch( ik , 2), sigma(ik) , grav , swd , self, imeanflow)
+
+                      bcfour%fluxbu(ibgrpt,lrel) = bcfour%fluxbu(ibgrpt,lrel) + campl3 *  ( IcoefQ( 1, ik ) -  IcoefQ( 1, ik+1 ) )
+                      bcfour%fluxbv(ibgrpt,lrel) = bcfour%fluxbv(ibgrpt,lrel) + campl3 *  ( IcoefQ( 2, ik ) -  IcoefQ( 2, ik+1 ) )
+                      !
+                   enddo !layers
+                   !
+                enddo !signindex
                 !
-                ! calculate frequency of bound long wave
-                !
-                f3 = f2 - f1
-                !
-                ! calculate direction of bound long wave
-                !
-                theta3 = atan( ( kwav2*sin(theta2) - kwav1*sin(theta1) ) / ( kwav2*cos(theta2) - kwav1*cos(theta1) ) )
-                !
-                ! calculate cosine of difference angles
-                !
-                cosdt = cos( theta1 - theta2 + pi )
-                !
-                ! calculate bound wave number
-                !
-                kwav3 = real(sqrt( dble(kwav1)**2 + dble(kwav2)**2 + 2.*dble(kwav1)*dble(kwav2)*cosdt ))
-                !
-                ! calculate bound wave group velocity
-                !
-                cg3 = pi2 * f3 / kwav3
-                !
-                ! calculate bound wave phase
-                !
-                phase3 = phase1 - phase2 + pi
-                !
-                ! include phase shift related to wave direction and wave number
-                !
-                phase3 = phase3 + kwav3 * ( cos(theta3)*xp + sin(theta3)*yp )
-                !
-                ! for computing the interaction coefficient for bound long wave, change sign of omega2
-                !
-                omega2 = -omega2
-                !
-                ! compute interaction coefficient as given by Eq. (4.3) of Hasselmann (1962)
-                !
-                Dp = (omega1+omega2) * ( (omega1*omega2)**2 /(grav**2) - kwav1*kwav2*cosdt ) - 0.5 * ( omega1*kwav2**2/(cosh(kwav2*swd)**2) + omega2*kwav1**2/(cosh(kwav1*swd)**2) )
-                !
-                ! compute the time derivative of second order potential
-                ! (derived from Eq. (4.7) of Hasselmann (1962) and use relation between potential and surface elevation for transformation, as given next to Eq. (1.26) at page 485)
-                !
-                T1 = Dp*grav*(omega1+omega2)/(omega1*omega2) / ( grav*kwav3*tanh(kwav3*swd) - (omega1+omega2)**2 )
-                !
-                ! compute interaction coefficient as given by Eq. (4.4) of Hasselmann (1962)
-                ! (use relation between potential and surface elevation for transformation, as given next to Eq. (1.26) at page 485)
-                !
-                T2 = -grav*kwav1*kwav2 / (2.*omega1*omega2) * cosdt + 0.5 * ( omega1**2 + omega1*omega2 + omega2**2 ) / grav
-                !
-                ! compute interaction coefficient for second order surface elevation amplitude, Eq. (4.2) of Hasselmann (1962)
-                !
-                Dz = T1 + T2
-                !
-                ! compute amplitude of bound wave
-                !
-                ampl3 = abs(Dz) * ampl1 * ampl2
-                !
-                l = nint(f3/df)
-                !
-                ! store surface elevation and mass flux of bound long wave
-                !
-                bcfour%zetab(ibgrpt,l) = bcfour%zetab(ibgrpt,l) + ampl3 * exp( (0.,1.) * phase3 )
-                !
-                if ( oned ) then
-                   bcfour%fluxbu(ibgrpt,l) = bcfour%fluxbu(ibgrpt,l) + cg3 * ampl3 * exp( (0.,1.) * phase3 )
-                else
-                   bcfour%fluxbu(ibgrpt,l) = bcfour%fluxbu(ibgrpt,l) + cg3 * ampl3 * cos(theta3) * exp( (0.,1.) * phase3 )
-                   bcfour%fluxbv(ibgrpt,l) = bcfour%fluxbv(ibgrpt,l) + cg3 * ampl3 * sin(theta3) * exp( (0.,1.) * phase3 )
-                endif
-                !
-             endif
+             endif !wavenumber limits component 2
              !
           enddo sloop
           !
-       endif
+       endif !wavenumber limits component 1  
        !
     enddo floop
     !
-end subroutine SwashBCboundwave
+  end subroutine SwashBCboundwave_init
+  !
+
+  !*****************************************************************************
+  subroutine so_Q( H , w1 , w2 , k1 , k2 ,ks,kw1,kw2,kws,k12, sh12,&
+       ch1,ch2, s , g , d , self , iMeanFlow)
+
+    !===========================================================================
+    ! DESCRIPTION
+    !===========================================================================
+    !
+    ! This subroutine calculates the int coef. for calculating the discharge
+    ! through a vertical plane between sigma =-1 and sigma=s, where sigma is the
+    ! sigma coordinate ( sigma = z - free surface loc. / ( depth + free surface loc.) )
+    !===========================================================================
+    ! VARIABLES
+    !===========================================================================
+
+    !---------------------------------------------------------------------------
+    ! GLOBAL (imported from modules etc.)
+    !---------------------------------------------------------------------------
+    ! 
+    ! NONE
+    !
+    !---------------------------------------------------------------------------
+    ! INPUT
+    !---------------------------------------------------------------------------
+
+
+    real,intent(in)     :: w1    ! signed angular frequency
+    real,intent(in)     :: w2    ! signed angular frequency
+    real,intent(in)     :: k1(2) ! Wavenumber vector
+    real,intent(in)     :: k2(2) ! Wavenumber vector
+    real,intent(in)     :: ks(2) ! Sum wavenumber vector  
+    real,intent(in)     :: kw1   ! wavenumber magnitude
+    real,intent(in)     :: kw2   ! wavenumber magnitude
+    real,intent(in)     :: kws   ! the magnutude of the sum ks
+    real,intent(in)     :: k12   ! inner product between k1 k2
+    real,intent(in)     :: sh12  ! inner product between k1 k2    
+    real,intent(in)     :: ch1   ! inner product between k1 k2
+    real,intent(in)     :: ch2   ! inner product between k1 k2    
+    real,intent(in)     :: s     ! sigma coordinate
+    real,intent(in)     :: g     ! gravitational acceleration
+    real,intent(in)     :: d     ! stillwater depth
+
+    logical, intent(in) :: self      ! Indicater whether or not this is a self-self
+                                     ! sum/difference interaction.
+    integer, intent(in) :: iMeanFlow ! Parameter that controls how to handle the
+                                     ! mean contribution
+    !                                ! [ = 1 :: as in LHS, the total mean mass flow is
+    !                                           the Eulerian return flow under a wave
+    !                                         + the Lagrangian mass transport.
+    !                                    = 2 :: Stokes drift cancelled by a sheared return flow 
+    !                                    = otherwise :: zero integrated transport
+    !
+    !---------------------------------------------------------------------------
+    ! INPUT/OUTPUT
+    !---------------------------------------------------------------------------
+
+    real,intent(inout) :: H(2) !The interaction coef, be aware is 
+    ! complex and should still be multiplied with "i"
+    
+    !---------------------------------------------------------------------------
+    ! LOCAL
+    !---------------------------------------------------------------------------
+    !
+    real             :: P
+    real             :: cg    
+    real             :: wrk(3)
+    integer          :: iv
+    logical          :: stokes,euler,integral
+    !
+    !===========================================================================
+    ! IMPLEMENTATION
+    !===========================================================================    
+    !
+    !
+    ! We first check if this is a self-difference interaction, if so we need to 
+    ! handle the singular contribution differently...
+    !
+    if ( .not. self .or. w1*w2 > 0) then
+       !
+       ! Not a self difference interaction so ...
+       !
+       wrk(  1 ) = w1 + w2
+       wrk(  2 ) = g * kws * tanh( kws * d )
+       wrk( 3 ) = 1./ ( wrk(2) - wrk(1)**2 )
+       !
+       ! The second-order potential interaction coeficient eq 9 (SJH17)
+       !
+       P = wrk(1) * ( g**2 * k12 /w1/w2 &
+            -  ( w1**2 + w2**2 + w1*w2) / 2 ) &
+            + g**2 * kw1**2./2./w1+g**2*kw2**2./2./w2;
+       !
+       P = wrk( 3 ) * P
+       !
+       do iv = 1 , 2
+          !
+          ! Note - this expression also contains a Stokes-like contribution due
+          ! to the moving surfaces...
+          H( iv ) = - ks(iv) * P * sh12 / kws  &
+               + g /2. * ( k1(iv) /w1 * ( 1 + s) * ch1 &
+               + k2(iv) /w2 * ( 1 + s) * ch2 )
+          !
+       end do
+       !
+    else
+       !
+       ! It is a self-difference interaction ...
+       !
+       select case (iMeanFlow)
+       case ( 1 )
+          !
+          ! 
+          ! The LHS type solution - there is a stokes drif and a return flow, in
+          ! deep water they exactly cancel (in an integral fashion). In finite depht
+          ! there is mass transport through the boundary
+          !
+          stokes   = .true.
+          euler    = .true.
+          integral = .false.
+          !
+       case ( 2 )
+          !
+          ! 
+          ! There is a sheared (vortical) mean eulerian flow that exactly cancels the
+          ! stokes contribution. No net mass transport through the boundary
+          !
+          stokes   = .false.
+          euler    = .false.
+          integral = .false.
+          !          
+       case DEFAULT
+          !
+          ! Default setup: at the boundary there is no depth integrated mean flow
+          ! but there is a depth dependent stokes drift and a constant return flow. No net mass
+          ! transport through the boundary
+          stokes   = .true.
+          euler    = .false.
+          integral = .true.
+          !
+       end select
+       
+       H = 0. 
+       if (stokes) then
+          !
+          do iv = 1 , 2
+             !
+             ! The Stokes like contribution due to the movement of the surface
+             !
+             H( iv ) = &
+                  + g /2. * ( k1(iv) /w1 * ( 1 + s) * ch1 &
+                  + k2(iv) /w2 * ( 1 + s) * ch2 )
+             !
+          end do
+          !
+       endif
+
+       if (Euler) then
+          !
+          ! The mean Eulerian contribution (i.e. effectively equal to u defined below LHS1962 contribution 3.36)
+          !
+          if ( kw1 * d < 5. )  then
+             !
+             ! Finite depth approximation
+             !
+             cg = abs(w1) / kw1 * ( 0.5 + kw1 * d / sinh( 2.* kw1*d) )
+             !
+          else
+             !
+             ! Deep water approximation
+             !
+             cg = 0.5 * abs(w1) / kw1
+             !
+          endif
+          !
+          wrk(1) = - d * g**2 * cg / ( g *d  - cg**2 ) * &
+               ( kw1**2 /w1**2 / 2 - w1**2/(2 *g**2) + kw1/abs(w1)/cg )
+
+
+          do iv = 1 , 2
+             !
+             H( iv ) = H( iv ) &
+                  + wrk(1)/2. * ( w1 * k1(iv) /kw1 / abs(w1) * ( 1 + s)&
+                                + w2 * k2(iv) /kw2 / abs(w1) * ( 1 + s) )
+             !
+          end do
+          !       
+       endif
+
+       if (integral) then
+          !
+          ! Cancel the Stokes contribution in an integral fashion
+          !
+          do iv = 1 , 2
+             !
+             H( iv ) = H( iv ) - g /2. * ( k1(iv) /w1 * ( 1 + s)  &
+                                         + k2(iv) /w2 * ( 1 + s)  )
+             !
+          enddo
+          !
+       endif
+    endif
+    !
+  end subroutine so_Q
+  !*****************************************************************************
+
+  !
+  !*****************************************************************************
+  subroutine so_sur( H , w1 , w2 , kw1,kw2,kws,k12, g , d, self, iMeanFlow )
+    !===========================================================================
+    ! DESCRIPTION
+    !===========================================================================
+    !
+    ! This subroutine calculates the free part of the
+    ! second-order potential...
+    !
+
+    !===========================================================================
+    ! VARIABLES
+    !===========================================================================
+
+    !---------------------------------------------------------------------------
+    ! GLOBAL (imported from modules etc.)
+    !---------------------------------------------------------------------------
+    ! 
+    ! NONE
+    !
+    !---------------------------------------------------------------------------
+    ! INPUT
+    !---------------------------------------------------------------------------
+
+
+    real,intent(in) :: w1
+    real,intent(in) :: w2
+    real,intent(in) :: kw1
+    real,intent(in) :: kw2
+    real,intent(in) :: kws  !the magnutude of the sum ks
+    real,intent(in) :: k12  !inner product between k1 k2
+    real,intent(in) :: g
+    real,intent(in) :: d
+
+    logical,intent(in) :: self
+    integer,intent(in) :: iMeanFlow
+    
+    !---------------------------------------------------------------------------
+    ! INPUT/OUTPUT
+    !---------------------------------------------------------------------------
+    
+    real,intent(inout) :: H
+    
+    !---------------------------------------------------------------------------
+    ! LOCAL
+    !---------------------------------------------------------------------------
+
+    integer :: ik !loop variable
+
+    real    :: wrk(3)
+    real    :: P
+    real    :: cg
+    logical :: setdown
+ 
+    
+    !===========================================================================
+    ! IMPLEMENTATION
+    !===========================================================================    
+
+    if ( .not. self .or. w1*w2 > 0. ) then
+       !
+       ! Not a self difference interaction so ...
+       !
+       wrk(  1 ) = w1 + w2
+       wrk(  2 ) = g * kws * tanh( kws * d )
+       wrk( 3 ) = 1./ ( wrk(2) - wrk(1)**2 )
+       !
+       ! The second-order potential interaction coeficient eq 9 (SJH17)
+       !
+       P = wrk(1) * ( g**2 * k12 /w1/w2 &
+            -  ( w1**2 + w2**2 + w1*w2) / 2 ) &
+            + g**2 * kw1**2./2./w1+g**2*kw2**2./2./w2;
+       !
+       P = wrk( 3 ) * P
+       !
+
+       !
+       H =- ( w1 + w2 ) / g  * P + (w1**2 + w2**2 + w1*w2) / 2 / g &
+            - g * k12 / 2. / w1 / w2
+       !
+    else
+       !
+       select case (iMeanFlow)
+          !
+       case ( 1 )
+          !
+          ! 
+          ! The LHS type solution - there is a stokes drif and a return flow, in
+          ! deep water they exactly cancel (in an integral fashion). In finite depht
+          ! there is mass transport through the boundary
+          !
+          setdown   = .true.
+          !
+       case ( 2 )
+          !
+          ! 
+          ! There is a sheared (vortical) mean eulerian flow that exactly cancels the
+          ! stokes contribution. No net mass transport through the boundary
+          !
+          setdown   = .false.
+          !          
+       case DEFAULT
+          !
+          ! Default setup: at the boundary there is no depth integrated mean flow
+          ! but there is a depth dependent stokes drift and a constant return flow. No net mass
+          ! transport through the boundary
+          setdown   = .false.
+          !
+       end select
+
+       if ( setdown ) then
+          !
+          if ( kw1 * d < 5. )  then
+             !
+             ! Finite depth approximation
+             !
+             cg = abs(w1) / kw1 * ( 0.5 + kw1 * d / sinh( 2.* kw1*d) )
+             !
+          else
+             !
+             ! Deep water approximation
+             !
+             cg = 0.5 * abs(w1) / kw1
+             !
+          endif
+          !
+          ! The setdown wave - this is identical to LHS1962
+          !
+          H = -g*(2.*cg* kw1 / abs(w1) - 0.5) / ( g *d - cg**2 )
+          !
+       endif !setdown
+       !
+    endif
+    !       
+  end subroutine so_sur

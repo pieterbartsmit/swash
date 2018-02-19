@@ -1169,11 +1169,8 @@ subroutine SwashExpLay1DHflow ( ibl, ibr, kgrpnt )
              !
              if ( ( udep(nm) > udep(nmd) .or. stricthead ) .and. .not.strictmom ) then
                 !
-                !fac1 = up(nmu,k) + 0.5*ua(nmu,k)
-                !fac2 = up(nm ,k) + 0.5*ua(nm ,k)
-                !jumps back to old implementation (020117)
-                fac1 = 0.
-                fac2 = 0.
+                fac1 = up(nmu,k) + 0.5*ua(nmu,k)
+                fac2 = up(nm ,k) + 0.5*ua(nm ,k)
                 !
              else if ( hkumn(nm,k) > 0. ) then
                 !
@@ -1245,7 +1242,7 @@ subroutine SwashExpLay1DHflow ( ibl, ibr, kgrpnt )
              amatw(nm,kmax,1) = 1.
              amatw(nm,kmax,2) = 0.
              amatw(nm,kmax,3) = 0.
-             w1   (nm,kmax  ) = 0.25 * rdx * ( 3.*(u1(nm,kmax)+u1(nmd,kmax)) - u1(nm,kmax-1) - u1(nmd,kmax-1) ) * ( zku(nm,kmax) - zku(nmd,kmax) )
+             w1   (nm,kmax  ) = 0.25 * rdx * ( 3.*(u1(nm,kmax)+u1(nmd,kmax)) - u1(nm,kmax-1) - u1(nmd,kmax-1) ) * ( zkum(nm,kmax) - zkum(nmd,kmax) )
              rhsw (nm,kmax  ) = w1(nm,kmax)
              !
           endif
@@ -1829,7 +1826,7 @@ subroutine SwashExpLay1DHflow ( ibl, ibr, kgrpnt )
           !
        enddo
        !
-       ! build the Poisson equation
+       ! build the Poisson equation for pressure correction
        !
        do m = mfu, ml
           !
@@ -2076,7 +2073,7 @@ subroutine SwashExpLay1DHflow ( ibl, ibr, kgrpnt )
           !
           if ( wets(nm) == 1 ) then
              !
-             w1(nm,kmax) = 0.25 * rdx * ( 3.*(u1(nm,kmax)+u1(nmd,kmax)) - u1(nm,kmax-1) - u1(nmd,kmax-1) ) * ( zku(nm,kmax) - zku(nmd,kmax) )
+             w1(nm,kmax) = 0.25 * rdx * ( 3.*(u1(nm,kmax)+u1(nmd,kmax)) - u1(nm,kmax-1) - u1(nmd,kmax-1) ) * ( zkum(nm,kmax) - zkum(nmd,kmax) )
              !
           endif
           !
@@ -2171,6 +2168,8 @@ subroutine SwashExpLay1DHflow ( ibl, ibr, kgrpnt )
              nm  = kgrpnt(m )
              nmd = kgrpnt(md)
              !
+             fac = 0.
+             !
              do k = 1, kmax
                 !
                 kd = max(k-1,1   )
@@ -2179,12 +2178,14 @@ subroutine SwashExpLay1DHflow ( ibl, ibr, kgrpnt )
                 kwu = 1.
                 if ( k == kmax ) kwu = 0.
                 !
-                moutf = moutf + dmat(nm,k,2) * u1(nm,k ) + dmat(nm,k,4) * u1(nmd,k ) +  &
-                                dmat(nm,k,1) * u1(nm,kd) + dmat(nm,k,3) * u1(nmd,kd) +  &
-                                dmat(nm,k,5) * u1(nm,ku) + dmat(nm,k,6) * u1(nmd,ku) +  &
-                                w1(nm,k-1) - kwu*w1(nm,k)
+                fac = fac + dmat(nm,k,2) * u1(nm,k ) + dmat(nm,k,4) * u1(nmd,k ) +  &
+                            dmat(nm,k,1) * u1(nm,kd) + dmat(nm,k,3) * u1(nmd,kd) +  &
+                            dmat(nm,k,5) * u1(nm,ku) + dmat(nm,k,6) * u1(nmd,ku) +  &
+                            w1(nm,k-1) - kwu*w1(nm,k)
                 !
              enddo
+             !
+             moutf = moutf + fac / hs(nm)
              !
           enddo
           !
