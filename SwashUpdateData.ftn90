@@ -1340,11 +1340,138 @@ subroutine SwashUpdateData ( it )
                 !
                 ! uniform distribution in vertical
                 !
-                if ( vdir ) then
-                   if ( hu(indx) > 0. ) u1(indx,:) = rsgn * sqrt( grav / hu(indx) ) * ( 2.*bval - s0(indxs) )
-                else
-                   if ( hv(indx) > 0. ) v1(indx,:) = rsgn * sqrt( grav / hv(indx) ) * ( 2.*bval - s0(indxs) )
+
+                !
+                ! compute bound long wave, if appropriate (uniform distribution in vertical)
+                !
+                fvalbu = 0.
+                fvalbv = 0.
+                !
+                ! determine bound long wave, if appropriate
+                !
+                !
+                !
+                swd  = dps(indxs)
+                dcor = swd / dep
+                curbfs => fbfs
+                wdir  = curbfs%spparm(3)
+                !
+                if ( wdir == -999. ) then
+                   ! incident or peak wave direction normal to the boundary
+                   if ( vdir ) then
+                      wdir = 0.5*(rsgn-1.)*pi + alpc
+                   else
+                      wdir = 0.5*rsgn*pi + alpc
+                   endif
                 endif
+                !
+                ! direction of each wave component in line with incident direction
+                ! in order to preserve symmetry at boundaries
+                !
+                if ( vdir ) then
+                   if ( .not. sin(wdir) < 0. ) then
+                      s = +1.
+                   else
+                      s = -1.
+                   endif
+                else
+                   if ( .not. cos(wdir) < 0. ) then
+                      s = +1.
+                   else
+                      s = -1.
+                   endif
+                endif
+                !
+                if ( oned ) then
+                   u1(indx,:) = 0.
+                else
+                   utmp(:) = 0.
+                   vtmp(:) = 0.
+                endif
+                !
+                if ( vdir ) then
+                   dep = hu(indx)
+                else
+                   dep = hv(indx)
+                endif                
+                shape = abs(spshape(2))                
+ 
+                nfreq = curbfs%nfreq
+
+                if ( it == 0 ) call SwashBCshortwave ( curbfs, nfreq, xp, yp, i, swd, wdir, rsgn, vdir, shape, ibloc )                
+                if ( ibound == 1 .and. it == 0 ) call SwashBCboundwave ( curbfs, nfreq, xp, yp, i, swd, wdir, rsgn, vdir, shape, ibloc )
+
+                !
+                if ( ibound == 1 ) then
+                   !
+                   
+                   do j = 1, nfreq-1
+                      !
+                      omegab = curbfs%omega(j+1) - curbfs%omega(1)
+		      if ( abs(omegab) > curbfs%omega(1) ) cycle
+                      !
+                      if ( vdir ) then
+                         fvalbu = fvalbu + real ( ( curbfs%fluxbu(i,j) / dep + rsgn * sqrt( grav / dep ) * curbfs%zetab(i,j) ) * exp( (0.,1.)*omegab*timco ) )
+                         fvalbv = fvalbv + real ( ( curbfs%fluxbv(i,j) / dep                                                 ) * exp( (0.,1.)*omegab*timco ) )
+                      else
+                         fvalbu = fvalbu + real ( ( curbfs%fluxbu(i,j) / dep                                                 ) * exp( (0.,1.)*omegab*timco ) )
+                         fvalbv = fvalbv + real ( ( curbfs%fluxbv(i,j) / dep + rsgn * sqrt( grav / dep ) * curbfs%zetab(i,j) ) * exp( (0.,1.)*omegab*timco ) )
+                      endif
+                      !
+                   enddo
+                   !
+                endif
+
+                
+                !
+                ! Quadratic distribution in the vertical based on KdV/Boussinesq theory...
+                !
+
+                fvalu = 0.
+                fvalv = 0.
+    
+                do j = 1, nfreq
+                   !
+                   ampl  = curbfs%ampl (j)
+                   omega = curbfs%omega(j)
+                   phase = curbfs%phase(j)
+                   !
+                   ! synthesize time series
+                   !
+                   fvalu = fvalu + ampl * cos( omega*timco )*cos( phase ) + ampl * sin( omega*timco )*sin( phase )
+                   !
+                   ! d2wdt2
+                   !
+                   fvalv = fvalv - ampl * omega**2 * cos( omega*timco )*cos( phase ) &
+                          - ampl * omega**2 * sin( omega*timco )*sin( phase )                  
+
+                   !
+                enddo
+                !
+
+                swd  = dps(indxs)
+                !
+                do k = 1, kmax
+                   !
+                   if ( vdir ) then
+                      z2 =  zku(indx,k-1) - zku(indx,kmax) - swd
+                      z1 =  zku(indx,k) - zku(indx,kmax) - swd
+ 
+                   else
+                      z2 = zkv(indx,k-1) - zkv(indx,kmax)
+                      z1 = zkv(indx,k  ) - zkv(indx,kmax)
+                   endif
+                   !
+                  if ( hu(indx) > 0. ) then
+                      !
+
+                      u1(indx,k) = fvalbu + rsgn * sqrt( grav / hu(indx) ) * ( 2.*bval - s0(indxs) ) &
+                           - sqrt(swd/grav) * ( 1./6. * (z2 - z1 ) + 1./6. * ( z2**3 - z1**3 ) /swd**2 + 1./2. * (z2**2-z1**2 )/swd  ) * fvalv / (z2-z1)
+                      !
+                   endif
+                   !
+                enddo
+                !
                 !
              endif
              !
