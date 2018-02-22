@@ -65,7 +65,6 @@ subroutine SwashUpdateData ( it )
     use m_genarr
     use SwashFlowdata
     use m_parall
-    use testing
 !
     implicit none
 !
