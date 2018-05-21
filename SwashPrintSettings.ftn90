@@ -11,7 +11,7 @@ subroutine SwashPrintSettings
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -190,7 +190,7 @@ subroutine SwashPrintSettings
           write (PRINTF, *) 'Bottom friction is off'
        endif
        !
-       if ( iveg == 1 ) then
+       if ( iveg /= 0 ) then
           write (PRINTF, *) 'Wave damping due to vegetation is included'
        else
           write (PRINTF, *) 'Vegetation is off'
@@ -273,24 +273,28 @@ subroutine SwashPrintSettings
           if ( itrans /= 0 ) write (PRINTF, 237) pnums(33)
        endif
        !
-       write (PRINTF, 238) nint(pnums(6)), pnums(7)
-       write (PRINTF, 245) pnums(8), pnums(9)
+       if ( ifloat /= 0 ) then
+          write (PRINTF, 238) pship(2)
+       endif
+       !
+       write (PRINTF, 239) nint(pnums(6)), pnums(7)
+       write (PRINTF, 246) pnums(8), pnums(9)
        if ( kmax > 1 ) then
-          write (PRINTF, 239) nint(pnums(36)), pnums(37)
-          write (PRINTF, 245) pnums(38), pnums(39)
+          write (PRINTF, 240) nint(pnums(36)), pnums(37)
+          write (PRINTF, 246) pnums(38), pnums(39)
        endif
        if ( horwinc .and. ihydro /= 0 ) then
-          write (PRINTF, 240) nint(pnums(16)), pnums(17)
-          write (PRINTF, 245) pnums(18), pnums(19)
+          write (PRINTF, 241) nint(pnums(16)), pnums(17)
+          write (PRINTF, 246) pnums(18), pnums(19)
        endif
        if ( kmax > 1 .and. (ihydro == 1 .or. ihydro == 2) ) then
           if ( verwinc ) then
-             write (PRINTF, 241) nint(pnums(41)), pnums(42)
-             write (PRINTF, 245) pnums(43), pnums(44)
+             write (PRINTF, 242) nint(pnums(41)), pnums(42)
+             write (PRINTF, 246) pnums(43), pnums(44)
           endif
        endif
-       write (PRINTF, 242) nint(pnums(11)), pnums(12)
-       write (PRINTF, 245) pnums(13), pnums(14)
+       write (PRINTF, 243) nint(pnums(11)), pnums(12)
+       write (PRINTF, 246) pnums(13), pnums(14)
        !
     else
        !
@@ -300,18 +304,29 @@ subroutine SwashPrintSettings
     endif
     !
     if ( itrans /= 0 ) then
-       write (PRINTF, 243) nint(pnums(46)), pnums(47)
-       write (PRINTF, 245) pnums(48), pnums(49)
+       write (PRINTF, 244) nint(pnums(46)), pnums(47)
+       write (PRINTF, 246) pnums(48), pnums(49)
        if ( kmax > 1 ) then
-          write (PRINTF, 244) nint(pnums(51)), pnums(52)
-          write (PRINTF, 245) pnums(53), pnums(54)
+          write (PRINTF, 245) nint(pnums(51)), pnums(52)
+          write (PRINTF, 246) pnums(53), pnums(54)
        endif
     endif
     !
-    write (PRINTF, 246) spwidl, spwidr
-    write (PRINTF, 247) spwidb, spwidt
+    if ( ihydro /= 0 ) then
+       if ( iproj == 1 ) then
+          write (PRINTF,*) 'Pressure correction method is employed'
+       else if ( iproj == 2 ) then
+          write (PRINTF,*) 'Pressure projection method is employed'
+          if ( lpproj ) then
+             write (PRINTF, 247) pnums(58), nint(pnums(59))
+          endif
+       endif
+    endif
     !
-    if ( ITMOPT /= 7 ) write (PRINTF, 248) DTTIWR(ITMOPT, 0.)
+    write (PRINTF, 248) spwidl, spwidr
+    write (PRINTF, 249) spwidb, spwidt
+    !
+    if ( ITMOPT /= 7 ) write (PRINTF, 250) DTTIWR(ITMOPT, 0.)
     !
  201 format (/,                                                          &
      '----------------------------------------------------------------'  &
@@ -356,16 +371,18 @@ subroutine SwashPrintSettings
  235 format (' Vertical terms u-mom : THETA  ',e12.4)
  236 format (' Vertical terms w-mom : THETA  ',e12.4)
  237 format (' Vertical terms trans : THETA  ',e12.4)
- 238 format (' Horz advection u-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
- 239 format (' Vert advection u-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
- 240 format (' Horz advection w-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
- 241 format (' Vert advection w-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
- 242 format (' Correction water dep : PROPSC ',i12  ,' KAPPA ',e12.4)
- 243 format (' Horz advection trans : PROPSC ',i12  ,' KAPPA ',e12.4)
- 244 format (' Vert advection trans : PROPSC ',i12  ,' KAPPA ',e12.4)
- 245 format ('                      : M      ',e12.4,' PHI   ',e12.4)
- 246 format (' Sponge layer widths  : LEFT   ',e12.4,' RIGHT ',e12.4)
- 247 format ('                      : LOWER  ',e12.4,' UPPER ',e12.4)
- 248 format (' Reference date and time         ',a15)
+ 238 format (' Beneath floating obj : THETA  ',e12.4)
+ 239 format (' Horz advection u-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
+ 240 format (' Vert advection u-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
+ 241 format (' Horz advection w-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
+ 242 format (' Vert advection w-mom : PROPSC ',i12  ,' KAPPA ',e12.4)
+ 243 format (' Correction water dep : PROPSC ',i12  ,' KAPPA ',e12.4)
+ 244 format (' Horz advection trans : PROPSC ',i12  ,' KAPPA ',e12.4)
+ 245 format (' Vert advection trans : PROPSC ',i12  ,' KAPPA ',e12.4)
+ 246 format ('                      : M      ',e12.4,' PHI   ',e12.4)
+ 247 format (' Iterative process    : ACCUR  ',e12.4,' MAXIT ',i12)
+ 248 format (' Sponge layer widths  : LEFT   ',e12.4,' RIGHT ',e12.4)
+ 249 format ('                      : LOWER  ',e12.4,' UPPER ',e12.4)
+ 250 format (' Reference date and time         ',a15)
     !
 end subroutine SwashPrintSettings

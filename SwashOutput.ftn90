@@ -11,7 +11,7 @@ subroutine SwashOutput
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -59,7 +59,7 @@ subroutine SwashOutput
 !
     use ocpcomm4
     use SwashCommdata1
-    use SwashCommdata3, only: kmax
+    use SwashCommdata3, only: ifloat, kmax
     use SwashCommdata4
     use outp_data
     use m_genarr, only: kgrpnt, xcgrid, ycgrid
@@ -179,6 +179,20 @@ subroutine SwashOutput
        ! calculate requested output quantities in the output points
        !
        call SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, voq(1+2*mip), voq(1+3*mip), voqr, voq, voqk, ionod )
+       !
+       ! calculate requested space-independent output quantities as time series
+       !
+       if ( psname(1:6) == 'NOGRID' ) then
+          !
+          ! compute the hydrodynamic loads acting on the floating body, if appropriate
+          !
+          if ( ifloat /= 0 ) call SwashHydroLoads ( oqproc, nvoqp, voqr, voq )
+          !
+          ! compute the runup height, if appropriate
+          !
+          if ( oqproc(113) ) call SwashRunupHeight ( oqproc, nvoqp, voqr, voq )
+          !
+       endif
        !
        if ( ITEST >= 100 ) then
           write (PRTEST, 206) (voqr(n), n=1, nmovar)

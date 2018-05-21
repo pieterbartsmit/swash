@@ -11,7 +11,7 @@ subroutine SwashBreakPoint
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -110,7 +110,7 @@ subroutine SwashBreakPoint
           nmd = kgrpnt(md,1)
           nmu = kgrpnt(mu,1)
           !
-          if ( wets(nm) == 1 ) then
+          if ( wets(nm) == 1 .and. presp(nm) == 0 ) then
              !
              rootgh = sqrt( grav * hs(nm) )
              !
@@ -169,7 +169,7 @@ subroutine SwashBreakPoint
              if ( ndm == 1 ) ndm = nm
              if ( num == 1 ) num = nm
              !
-             if ( wets(nm) == 1 ) then
+             if ( wets(nm) == 1 .and. presp(nm) == 0 ) then
                 !
                 rootgh = sqrt( grav * hs(nm) )
                 !

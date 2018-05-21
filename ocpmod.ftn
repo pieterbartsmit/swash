@@ -21,7 +21,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -67,10 +67,10 @@
 !
 !  6. Parameter variables
 !
-!     LINELN [ 120]  max length of input lines (in command file)
+!     LINELN [ 180]  max length of input lines (in command file)
 !
       INTEGER LINELN
-      PARAMETER  (LINELN=120)
+      PARAMETER  (LINELN=180)
 !
 !  7. Local variables
 !
@@ -179,7 +179,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -225,10 +225,10 @@
 !
 !  6. Parameter variables
 !
-!     LENFNM [  80]  length of file names
+!     LENFNM [ 140]  length of file names (including path)
 !
       INTEGER LENFNM
-      PARAMETER (LENFNM=80)
+      PARAMETER (LENFNM=140)
 !
 !  7. Local variables
 !
@@ -301,7 +301,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -404,7 +404,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as

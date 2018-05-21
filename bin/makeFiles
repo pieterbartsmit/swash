@@ -1,0 +1,36 @@
+#!/bin/bash
+
+
+currentDirectory=$(pwd)
+branch=$1
+if [ -z $1 ]
+then
+   branch='master'
+fi   
+mkdir $branch
+mkdir temp
+
+target1="$currentDirectory/$branch/mpi"
+target2="$currentDirectory/$branch/ser"
+
+mkdir "$branch/mpi"
+mkdir "$branch/ser"
+
+comp="$currentDirectory/temp"
+cd /Users/pieterbartsmit/Google\ Drive/repos/SWASH
+git checkout $branch
+
+cp *  "$comp"
+
+cd "$comp"
+make config
+make mpi
+chmod +x swash.exe
+cp swash.exe "$target1"
+
+make clobber
+make ser
+chmod +x swash.exe
+cp swash.exe "$target2"
+
+rm *

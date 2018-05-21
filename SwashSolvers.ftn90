@@ -8,14 +8,17 @@
 !     avmp
 !     ivl
 !     ivu
-!     pcg
+!     pcg  (single precision)
+!     pcg2 (double precision)
 !     sip
 !     ilu
 !     ilud
 !     iluds
 !     bicgstab
-!     tridiag
-!     dac
+!     tridiag  (single precision)
+!     tridiag2 (double precision)
+!     dac  (single precision)
+!     dac2 (double precision)
 !     newton1D
 !     newton2D
 !
@@ -32,7 +35,7 @@ subroutine avm ( amat, vi, vo )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -199,7 +202,7 @@ subroutine ave ( amat, vi, vo, vt )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -465,7 +468,7 @@ subroutine avmp ( amat, vi, vo, vt )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -623,7 +626,7 @@ subroutine ivl ( prec, v )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -747,7 +750,7 @@ subroutine ivu ( prec, v )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -954,7 +957,7 @@ subroutine pcg ( amat, rhs, x )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -985,6 +988,8 @@ subroutine pcg ( amat, rhs, x )
 !   Solves system of equations by means of preconditioned conjugate gradient algorithm
 !
 !   Method
+!
+!   System of equations in single precision
 !
 !   The system is supposed to be symmetric and positive definite
 !
@@ -1378,6 +1383,445 @@ subroutine pcg ( amat, rhs, x )
     !
 end subroutine pcg
 !
+subroutine pcg2 ( amat, rhs, x )
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering                              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmers: The SWASH team                               |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!   Authors
+!
+!    1.00: Marcel Zijlema
+!
+!   Updates
+!
+!    1.00, April 2010: New subroutine
+!
+!   Purpose
+!
+!   Solves system of equations by means of preconditioned conjugate gradient algorithm
+!
+!   Method
+!
+!   System of equations in double precision
+!
+!   The system is supposed to be symmetric and positive definite
+!
+!   A diagonal matrix D is computed in order to scale the system with the inverse of D
+!
+!   Based on the scaled system an incomplete decomposition is obtained, using the following rules:
+!
+!   A = LU - R
+!
+!   (a)  diag(L) = diag(U) = I,
+!   (b)  the off-diagonal parts of L and U are equal to the corresponding parts of A
+!   (c)  diag(LU) = diag(A)
+!
+!   This incomplete decomposition is used as the ILUD split preconditioner. If the last rule (c) is
+!   replaced by
+!
+!   rowsum(LU) = rowsum(A)
+!
+!   the MILUD preconditioner is obtained. We also used a RILUD preconditioner, which is the
+!   average of ILUD and MILUD. The contributions on the diagonal are weighted by the scalar amod,
+!   amod = 0 corresponds with ILUD, whereas amod = 1 corresponds with MILUD.
+!
+!   Using this incomplete LU decomposition, the system Ax = b is split preconditioned as follows:
+!
+!    -1  -1     -1
+!   L  AU  y = L  b    with  y = Ux
+!
+!   The well-known CG method is applied for the solution of preconditioned Ax = b
+!
+!   Modules used
+!
+    use ocpcomm4
+    use SwashCommdata3, only: mcgrd, pnums
+    use SwashFlowdata, only: mfu, ml, nfu, nl
+    use m_genarr, only: kgrpnt
+    use m_parall
+    use SwashSolvedata
+!
+    implicit none
+!
+!   Argument variables
+!
+    real*8, dimension(mcgrd,5), intent(inout) :: amat ! coefficient matrix of the system of equations
+    real*8, dimension(mcgrd  ), intent(inout) :: rhs  ! right-hand side of the system of equations
+    real*8, dimension(mcgrd  ), intent(out)   :: x    ! solution of the system of equations
+!
+!   Parameter variables
+!
+    double precision, parameter :: epsmac = 1d-18 ! machine precision number
+!
+!   Local variables
+!
+    integer, save :: ient = 0 ! number of entries in this subroutine
+    integer       :: j        ! iteration counter
+    integer       :: m        ! loop counter
+    integer       :: maxit    ! maximum number of iterations
+    integer       :: md       ! index of point m-1
+    integer       :: mend     ! end index of loop over wl-points in x-direction
+    integer       :: mu       ! index of point m+1
+    integer       :: n        ! loop counter
+    integer       :: nd       ! index of point n-1
+    integer       :: ndm      ! pointer to m,n-1
+    integer       :: nend     ! end index of loop over wl-points in y-direction
+    integer       :: nm       ! pointer to m,n
+    integer       :: nmd      ! pointer to m-1,n
+    integer       :: nmu      ! pointer to m+1,n
+    integer       :: nu       ! index of point n+1
+    integer       :: num      ! pointer to m,n+1
+    !
+    real*8        :: a        ! inner product of conjugate vector and matrix times conjugate vector
+    real*8        :: alpha    ! coefficients in expansion of the solution formed by conjugate vectors
+    real*8        :: amod     ! parameter used in the average of ILUD and MILUD preconditioners
+    real*8        :: beta     ! coefficients in Gram-Schmidt orthogonalization
+    real*8        :: epslin   ! required accuracy in the linear solver
+    real*8        :: reps     ! accuracy with respect to the initial residual used in the following termination criterion:
+                              !
+                              !  ||b-Ax || < reps*||b-Ax ||
+                              !        j                0
+                              !
+    real*8        :: rho      ! inner product of the residual vector
+    real*8        :: rhold    ! inner product of the residual vector from previous iteration
+    real*8        :: rnorm    ! 2-norm of residual vector
+    real*8        :: rnrm0    ! 2-norm of initial residual vector
+    real*8        :: ueps     ! minimal accuracy based on machine precision
+    !
+    logical       :: STPNOW   ! indicates that program must stop
+!
+!   Structure
+!
+!   Description of the pseudo code
+!
+!   Source text
+!
+    if (ltrace) call strace (ient,'pcg2')
+    !
+    reps  = dble(pnums(21))
+    maxit = nint(pnums(24))
+    amod  = dble(pnums(26))
+    !
+    ! not computed for points ml and nl at subdomain interfaces since, these end points are owned by the neighbouring subdomains
+    !
+    mend = ml - 1
+    if ( LMXL ) mend = ml
+    !
+    nend = nl - 1
+    if ( LMYL ) nend = nl
+    !
+    ! compute diagonal elements for scaling the system
+    !
+    do n = nfu, nl
+       do m = mfu, ml
+          !
+          md = m - 1
+          nd = n - 1
+          !
+          nm  = kgrpnt(m ,n )
+          nmd = kgrpnt(md,n )
+          ndm = kgrpnt(m ,nd)
+          !
+          diag2(nm) = amat(nm,1) - amat(nm,2)*((1d0-amod)*amat(nmd,3) + amod*(amat(nmd,3)+amat(nmd,5))) / diag2(nmd)  &
+                                 - amat(nm,4)*((1d0-amod)*amat(ndm,5) + amod*(amat(ndm,3)+amat(ndm,5))) / diag2(ndm)
+          !
+       enddo
+    enddo
+    !
+    ! scale the system with the inverse of the diagonal matrix
+    !
+    do n = nfu, nl
+       do m = mfu, ml
+          !
+          nm = kgrpnt(m,n)
+          !
+          amat(nm,:) = amat(nm,:) / diag2(nm)
+          rhs (nm  ) = rhs (nm  ) / diag2(nm)
+          !
+       enddo
+    enddo
+    !
+    ! compute initial residual
+    !
+    do n = nfu, nend
+       do m = mfu, mend
+          !
+          md = m - 1
+          mu = m + 1
+          nd = n - 1
+          nu = n + 1
+          !
+          nm  = kgrpnt(m ,n )
+          nmd = kgrpnt(md,n )
+          nmu = kgrpnt(mu,n )
+          ndm = kgrpnt(m ,nd)
+          num = kgrpnt(m ,nu)
+          !
+          resd2(nm) = amat(nm,1)*x(nm) + amat(nm,2)*x(nmd) + amat(nm,3)*x(nmu) + amat(nm,4)*x(ndm) + amat(nm,5)*x(num)
+          !
+       enddo
+    enddo
+    !
+    do n = nfu, nend
+       do m = mfu, mend
+          !
+          nm = kgrpnt(m,n)
+          !
+          resd2(nm) = rhs  (nm) - resd2(nm)
+          z3   (nm) = resd2(nm)
+          !
+       enddo
+    enddo
+    !
+    call SWEXCHGD ( z3, kgrpnt, 1, 1 )
+    if (STPNOW()) return
+    !
+    ! multipy vector by the inverse of a lower triangular matrix
+    !
+    do n = nfu, nend
+       do m = mfu, mend
+          !
+          md = m - 1
+          nd = n - 1
+          !
+          nm  = kgrpnt(m ,n )
+          nmd = kgrpnt(md,n )
+          ndm = kgrpnt(m ,nd)
+          !
+          z3(nm) = z3(nm) - amat(nm,2)*z3(nmd) - amat(nm,4)*z3(ndm)
+          !
+       enddo
+    enddo
+    !
+    call SWEXCHGD ( z3, kgrpnt, 1, 1 )
+    if (STPNOW()) return
+    !
+    ! multiply vector by the inverse of an upper triangular matrix
+    !
+    do n = nend, nfu, -1
+       do m = mend, mfu, -1
+          !
+          mu = m + 1
+          nu = n + 1
+          !
+          nm  = kgrpnt(m ,n )
+          nmu = kgrpnt(mu,n )
+          num = kgrpnt(m ,nu)
+          !
+          z3(nm) = z3(nm) - amat(nm,3)*z3(nmu) - amat(nm,5)*z3(num)
+          !
+       enddo
+    enddo
+    !
+    do n = nfu, nend
+       do m = mfu, mend
+          !
+          nm = kgrpnt(m,n)
+          !
+          s2(nm) = z3(nm)
+          !
+       enddo
+    enddo
+    !
+    rho = 0d0
+    do n = nfu, nend
+       do m = mfu, mend
+          !
+          nm = kgrpnt(m,n)
+          !
+          rho = rho + resd2(nm)*z3(nm)
+          !
+       enddo
+    enddo
+    !
+    call SWREDUCD ( rho, 1, SWSUM )
+    rnrm0 = sqrt(rho)
+    !
+    epslin = reps*rnrm0
+    ueps   = 1d3*epsmac*rnrm0
+    !
+    if ( epslin < ueps .and. rnrm0 > 0d0 ) then
+       !
+       if ( iamout > 0 .and. INODE == MASTER ) then
+          write (PRINTF, '(a)') ' ++ pcg: the required accuracy is too small'
+          write (PRINTF, '(a,e12.6)') '         required accuracy    = ',epslin
+          write (PRINTF, '(a,e12.6)') '         appropriate accuracy = ',ueps
+       endif
+       !
+       epslin = ueps
+       !
+    endif
+    !
+    do j = 1, maxit
+       !
+       call SWEXCHGD ( s2, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       do n = nfu, nl
+          do m = mfu, ml
+             !
+             md = m - 1
+             mu = m + 1
+             nd = n - 1
+             nu = n + 1
+             !
+             nm  = kgrpnt(m ,n )
+             nmd = kgrpnt(md,n )
+             nmu = kgrpnt(mu,n )
+             ndm = kgrpnt(m ,nd)
+             num = kgrpnt(m ,nu)
+             !
+             r2(nm) = amat(nm,1)*s2(nm) + amat(nm,2)*s2(nmd) + amat(nm,3)*s2(nmu) + amat(nm,4)*s2(ndm) + amat(nm,5)*s2(num)
+             !
+          enddo
+       enddo
+       !
+       a = 0d0
+       do n = nfu, nend
+          do m = mfu, mend
+             !
+             nm = kgrpnt(m,n)
+             !
+             a = a + s2(nm)*r2(nm)
+             !
+          enddo
+       enddo
+       call SWREDUCD ( a, 1, SWSUM )
+       !
+       alpha = rho / a
+       !
+       do n = nfu, nend
+          do m = mfu, mend
+             !
+             nm = kgrpnt(m,n)
+             !
+             x    (nm) = x    (nm) + alpha*s2(nm)
+             resd2(nm) = resd2(nm) - alpha*r2(nm)
+             z3   (nm) = resd2(nm)
+             !
+          enddo
+       enddo
+       !
+       call SWEXCHGD ( z3, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       ! multipy vector by the inverse of a lower triangular matrix
+       !
+       do n = nfu, nend
+          do m = mfu, mend
+             !
+             md = m - 1
+             nd = n - 1
+             !
+             nm  = kgrpnt(m ,n )
+             nmd = kgrpnt(md,n )
+             ndm = kgrpnt(m ,nd)
+             !
+             z3(nm) = z3(nm) - amat(nm,2)*z3(nmd) - amat(nm,4)*z3(ndm)
+             !
+          enddo
+       enddo
+       !
+       call SWEXCHGD ( z3, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       ! multiply vector by the inverse of an upper triangular matrix
+       !
+       do n = nend, nfu, -1
+          do m = mend, mfu, -1
+             !
+             mu = m + 1
+             nu = n + 1
+             !
+             nm  = kgrpnt(m ,n )
+             nmu = kgrpnt(mu,n )
+             num = kgrpnt(m ,nu)
+             !
+             z3(nm) = z3(nm) - amat(nm,3)*z3(nmu) - amat(nm,5)*z3(num)
+             !
+          enddo
+       enddo
+       !
+       rhold = rho
+       !
+       rho = 0d0
+       do n = nfu, nend
+          do m = mfu, mend
+             !
+             nm = kgrpnt(m,n)
+             !
+             rho = rho + resd2(nm)*z3(nm)
+             !
+          enddo
+       enddo
+       call SWREDUCD ( rho, 1, SWSUM )
+       rnorm = sqrt(rho)
+       !
+       if ( iamout == 2 .and. INODE == MASTER ) then
+          write (PRINTF, '(a,i3,a,e12.6)') ' ++ pcg: iter = ',j,'    res = ',rnorm
+       endif
+       !
+       if ( .not. rnorm > epslin ) exit
+       !
+       beta = rho / rhold
+       !
+       do n = nfu, nend
+          do m = mfu, mend
+             !
+             nm = kgrpnt(m,n)
+             !
+             s2(nm) = z3(nm) + beta*s2(nm)
+             !
+          enddo
+       enddo
+       !
+    enddo
+    !
+    ! investigate the reason for stopping
+    !
+    if ( rnorm > epslin .and. iamout > 0 .and. INODE == MASTER ) then
+       !
+       write (PRINTF, '(a)') ' ++ pcg: no convergence for solving system of equations'
+       write (PRINTF, '(a,i3)'   ) '         total number of iterations     = ',j
+       write (PRINTF, '(a,e12.6)') '         2-norm of the residual         = ',rnorm
+       write (PRINTF, '(a,e12.6)') '         required accuracy              = ',epslin
+       !
+    else if ( iamout == 3 .and. INODE == MASTER ) then
+       !
+       write (PRINTF, '(a,e12.6)') ' ++ pcg: 2-norm of the initial residual = ',rnrm0
+       write (PRINTF, '(a,i3)'   ) '         total number of iterations     = ',j
+       write (PRINTF, '(a,e12.6)') '         2-norm of the residual         = ',rnorm
+       !
+    endif
+    !
+end subroutine pcg2
+!
 subroutine sip ( amat, rhs, x )
 !
 !   --|-----------------------------------------------------------|--
@@ -1391,7 +1835,7 @@ subroutine sip ( amat, rhs, x )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1840,7 +2284,7 @@ subroutine ilu ( amat )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -2278,7 +2722,7 @@ subroutine ilud ( amat )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -2636,7 +3080,7 @@ subroutine iluds ( amat )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -2900,7 +3344,7 @@ subroutine bicgstab ( amat, rhs, x )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -3887,7 +4331,7 @@ subroutine tridiag ( a, b, c, d, x, kgrpnt )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -3916,6 +4360,10 @@ subroutine tridiag ( a, b, c, d, x, kgrpnt )
 !   Purpose
 !
 !   Solves tri-diagonal system of equations
+!
+!   Method
+!
+!   System of equations in single precision
 !
 !   Modules used
 !
@@ -4092,6 +4540,228 @@ subroutine tridiag ( a, b, c, d, x, kgrpnt )
     !
 end subroutine tridiag
 !
+subroutine tridiag2 ( a, b, c, d, x, kgrpnt )
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering                              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmers: The SWASH team                               |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!   Authors
+!
+!    1.00: Marcel Zijlema
+!
+!   Updates
+!
+!    1.00, Augustus 2014: New subroutine
+!
+!   Purpose
+!
+!   Solves tri-diagonal system of equations
+!
+!   Method
+!
+!   System of equations in double precision
+!
+!   Modules used
+!
+    use ocpcomm4
+    use SwashCommdata3, only: mcgrd, mxc
+    use SwashFlowdata, only: mf, mfu, ml
+    use m_parall
+!
+    implicit none
+!
+!   Argument variables
+!
+    integer, dimension(mxc), intent(in)     :: kgrpnt ! index table containing the address of each (active) grid point
+                                                      ! =1: not active grid point
+                                                      ! >1: active grid point
+    !
+    real*8, dimension(mcgrd), intent(inout) :: a      ! lower diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(inout) :: b      ! main diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(inout) :: c      ! upper diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(inout) :: d      ! right-hand side of tri-diagonal system of equations
+    real*8, dimension(mcgrd), intent(inout) :: x      ! solution of the system of equations
+!
+!   Local variables
+!
+    integer, save :: ient = 0 ! number of entries in this subroutine
+    integer       :: m        ! loop counter
+    integer       :: md       ! index of point m-1
+    integer       :: mend     ! end index of loop over wl-points in x-direction
+    integer       :: mu       ! index of point m+1
+    integer       :: nm       ! pointer to m
+    integer       :: nmd      ! pointer to m-1
+    integer       :: nmf      ! pointer to mf
+    integer       :: nmfu     ! pointer to mfu
+    integer       :: nml      ! pointer to ml
+    integer       :: nmld     ! pointer to mld
+    integer       :: nmu      ! pointer to m+1
+    !
+    real*8        :: fac      ! a factor
+    !
+    logical       :: STPNOW   ! indicates that program must stop
+!
+!   Structure
+!
+!   Description of the pseudo code
+!
+!   Source text
+!
+    if (ltrace) call strace (ient,'tridiag2')
+    !
+    nmf  = kgrpnt(mf   )
+    nmfu = kgrpnt(mfu  )
+    nml  = kgrpnt(ml   )
+    nmld = kgrpnt(ml -1)
+    !
+    if ( NPROC == 1 .or. NPROC == 2 ) then
+       !
+       ! The next piece of code works for both serial and parallel runs:
+       !
+       !    in case of serial run double sweep is carried out
+       !    in case of parallel run twisted factorization technique is employed which is perfectly parallelizable for two processors only
+       !
+       if ( INODE == 1 ) then
+          !
+          ! forward sweep (elimination)
+          !
+          ! not computed for point ml at subdomain interface since, this end point is owned by the neighbouring subdomain
+          !
+          mend = ml - 1
+          if ( LMXL ) mend = ml
+          !
+          do m = mfu+1, mend
+             !
+             md = m - 1
+             !
+             nm  = kgrpnt(m )
+             nmd = kgrpnt(md)
+             !
+             fac   = a(nm) / b(nmd)
+             b(nm) = b(nm) - fac*c(nmd)
+             d(nm) = d(nm) - fac*d(nmd)
+             !
+          enddo
+          !
+       else
+          !
+          ! backward sweep (elimination)
+          !
+          do m = ml-1, mfu, -1
+             !
+             mu = m + 1
+             !
+             nm  = kgrpnt(m )
+             nmu = kgrpnt(mu)
+             !
+             fac   = c(nm) / b(nmu)
+             b(nm) = b(nm) - fac*a(nmu)
+             d(nm) = d(nm) - fac*d(nmu)
+             !
+          enddo
+          !
+       endif
+       !
+       ! exchange coefficients a, b, c and d with neighbouring subdomains
+       !
+       call SWEXCHGD ( a, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       call SWEXCHGD ( b, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       call SWEXCHGD ( c, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       call SWEXCHGD ( d, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       if ( INODE == 1 ) then
+          !
+          ! forward sweep in point ml (elimination)
+          !
+          if ( .not.LMXL ) then
+             !
+             fac    = a(nml) / b(nmld)
+             b(nml) = b(nml) - fac*c(nmld)
+             d(nml) = d(nml) - fac*d(nmld)
+             !
+          endif
+          !
+          ! backward sweep (substitution)
+          !
+          x(nml) = d(nml) / b(nml)
+          !
+          do m = ml-1, mfu, -1
+             !
+             mu = m + 1
+             !
+             nm  = kgrpnt(m )
+             nmu = kgrpnt(mu)
+             !
+             x(nm) = ( d(nm)-c(nm)*x(nmu) ) / b(nm)
+             !
+          enddo
+          !
+       else
+          !
+          ! backward sweep in point mf (elimination)
+          !
+          fac    = c(nmf) / b(nmfu)
+          b(nmf) = b(nmf) - fac*a(nmfu)
+          d(nmf) = d(nmf) - fac*d(nmfu)
+          !
+          ! forward sweep (substitution)
+          !
+          x(nmf) = d(nmf) / b(nmf)
+          !
+          do m = mfu, ml
+             !
+             md = m - 1
+             !
+             nm  = kgrpnt(m )
+             nmd = kgrpnt(md)
+             !
+             x(nm) = ( d(nm)-a(nm)*x(nmd) ) / b(nm)
+             !
+          enddo
+          !
+       endif
+       !
+    else
+       !
+       ! Bondeli's divide and conquer algorithm
+       !
+       call dac2 ( a, b, c, d, x, kgrpnt )
+       if (STPNOW()) return
+       !
+    endif
+    !
+end subroutine tridiag2
+!
 subroutine dac ( a, b, c, d, x, kgrpnt )
 !
 !   --|-----------------------------------------------------------|--
@@ -4105,7 +4775,7 @@ subroutine dac ( a, b, c, d, x, kgrpnt )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -4136,6 +4806,8 @@ subroutine dac ( a, b, c, d, x, kgrpnt )
 !   Solves tri-diagonal system of equations by means of Bondeli's DAC solver
 !
 !   Method
+!
+!   System of equations in single precision
 !
 !   The tri-diagonal system of equations is solved on a parallel computer using a divide and conquer method as described in
 !
@@ -4365,6 +5037,281 @@ subroutine dac ( a, b, c, d, x, kgrpnt )
     !
 end subroutine dac
 !
+subroutine dac2 ( a, b, c, d, x, kgrpnt )
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering                              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmers: The SWASH team                               |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!   Authors
+!
+!    1.00: Marcel Zijlema
+!
+!   Updates
+!
+!    1.00, September 2011: New subroutine
+!
+!   Purpose
+!
+!   Solves tri-diagonal system of equations by means of Bondeli's DAC solver
+!
+!   Method
+!
+!   System of equations in double precision
+!
+!   The tri-diagonal system of equations is solved on a parallel computer using a divide and conquer method as described in
+!
+!   S. Bondeli
+!   Divide and conquer: a parallel algorithm for the solution of a tri-diagonal linear system of equations
+!   Parallel Computing, vol. 17, 419-434, 1991
+!
+!   This method is highly parallelizable and requires almost twice the number of operations as double sweep algorithm
+!
+!   Modules used
+!
+    use ocpcomm4
+    use SwashCommdata3, only: mcgrd, mxc
+    use SwashFlowdata, only: mfu, ml
+    use m_parall
+    use SwashSolvedata, only: z12, z22
+!
+    implicit none
+!
+!   Argument variables
+!
+    integer, dimension(mxc), intent(in)     :: kgrpnt ! index table containing the address of each (active) grid point
+                                                      ! =1: not active grid point
+                                                      ! >1: active grid point
+    !
+    real*8, dimension(mcgrd), intent(inout) :: a      ! lower diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(inout) :: b      ! main diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(inout) :: c      ! upper diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(inout) :: d      ! right-hand side of tri-diagonal system of equations
+    real*8, dimension(mcgrd), intent(out)   :: x      ! solution of the system of equations
+!
+!   Local variables
+!
+    integer                      :: i        ! loop counter
+    integer, save                :: ient = 0 ! number of entries in this subroutine
+    integer                      :: ip       ! loop counter
+    integer                      :: j        ! counter
+    integer                      :: m        ! loop counter
+    integer                      :: md       ! index of point m-1
+    integer                      :: mend     ! end index of loop over wl-points in x-direction
+    integer                      :: mu       ! index of point m+1
+    integer                      :: nm       ! pointer to m
+    integer                      :: nmd      ! pointer to m-1
+    integer                      :: nmend    ! pointer to mend
+    integer                      :: nmfu     ! pointer to mfu
+    integer                      :: nmu      ! pointer to m+1
+    !
+    real*8, dimension(2*NPROC-2) :: alpha    ! solution of small system of equations
+    real*8, dimension(8,NPROC)   :: arrc     ! auxiliary array for collecting data
+    real*8, dimension(8)         :: arrl     ! auxiliary array containing some data of each subdomain
+    real*8, dimension(2*NPROC-2) :: beta     ! right-hand side of small system of equations
+    real*8                       :: fac      ! a factor
+    real*8, dimension(2*NPROC-2) :: r        ! lower diagonal of small system of equations
+    real*8, dimension(2*NPROC-2) :: s        ! main diagonal of small system of equations
+    real*8, dimension(2*NPROC-2) :: t        ! upper diagonal of small system of equations
+    !
+    logical                      :: STPNOW   ! indicates that program must stop
+!
+!   Structure
+!
+!   Description of the pseudo code
+!
+!   Source text
+!
+    if (ltrace) call strace (ient,'dac2')
+    !
+    nmfu = kgrpnt(mfu)
+    !
+    ! initialize the small system of equations
+    !
+    alpha = 0d0
+    beta  = 0d0
+    r     = 0d0
+    s     = 1d0
+    t     = 0d0
+    !
+    ! not computed for point ml at subdomain interface since, this end point is owned by the neighbouring subdomain
+    !
+    mend = ml - 1
+    if ( LMXL ) mend = ml
+    nmend = kgrpnt(mend)
+    !
+    ! initialize z22 and z12 as first and last unit vector, respectively
+    !
+    z12        = 0d0
+    z22        = 0d0
+    z12(nmend) = 1d0
+    z22(nmfu ) = 1d0
+    !
+    ! solve three local systems of equations by means of double sweep
+    !
+    do m = mfu+1, mend
+       !
+       md = m - 1
+       !
+       nm  = kgrpnt(m )
+       nmd = kgrpnt(md)
+       !
+       fac    = a(nm) / b(nmd)
+       b  (nm) = b  (nm) - fac*c  (nmd)
+       d  (nm) = d  (nm) - fac*d  (nmd)
+       z12(nm) = z12(nm) - fac*z12(nmd)
+       z22(nm) = z22(nm) - fac*z22(nmd)
+       !
+    enddo
+    !
+    x  (nmend) = d  (nmend) / b(nmend)
+    z12(nmend) = z12(nmend) / b(nmend)
+    z22(nmend) = z22(nmend) / b(nmend)
+    !
+    do m = mend-1, mfu, -1
+       !
+       mu = m + 1
+       !
+       nm  = kgrpnt(m )
+       nmu = kgrpnt(mu)
+       !
+       x  (nm) = ( d  (nm)-c(nm)*x  (nmu) ) / b(nm)
+       z12(nm) = ( z12(nm)-c(nm)*z12(nmu) ) / b(nm)
+       z22(nm) = ( z22(nm)-c(nm)*z22(nmu) ) / b(nm)
+       !
+    enddo
+    !
+    ! gather first and last elements of matrix and solutions from all subdomains to the master
+    !
+    arrl(1) = a  (nmfu ) + 1.d-8
+    arrl(2) = c  (nmend) + 1.d-8
+    arrl(3) = x  (nmend)
+    arrl(4) = x  (nmfu )
+    arrl(5) = z12(nmend)
+    arrl(6) = z12(nmfu )
+    arrl(7) = z22(nmend)
+    arrl(8) = z22(nmfu )
+    !
+    call SWGATHERD ( arrc, 8*NPROC, arrl, 8 )
+    if (STPNOW()) return
+    !
+    ! find solution of the small system of 2*(NPROC-1) equations by the master
+    !
+    if ( INODE == MASTER ) then
+       !
+       ! build the small system of equations
+       !
+       fac     =  arrc(1,2)
+       s   (1) =  arrc(5,1)*fac
+       t   (1) =  1d0
+       beta(1) = -arrc(3,1)*fac
+       !
+       fac             =  arrc(2,NPROC-1)
+       s   (2*NPROC-2) =  arrc(8,NPROC)*fac
+       r   (2*NPROC-2) =  1d0
+       beta(2*NPROC-2) = -arrc(4,NPROC)*fac
+       !
+       do ip = 2, NPROC-1
+          !
+          ! odd index
+          !
+          j = 2*ip-1
+          !
+          fac     =  arrc(1,ip+1)
+          s   (j) =  arrc(5,ip)*fac
+          r   (j) =  arrc(7,ip)*fac
+          t   (j) =  1d0
+          beta(j) = -arrc(3,ip)*fac
+          !
+          ! even index
+          !
+          j = 2*ip-2
+          !
+          fac     =  arrc(2,ip-1)
+          s   (j) =  arrc(8,ip)*fac
+          r   (j) =  1d0
+          t   (j) =  arrc(6,ip)*fac
+          beta(j) = -arrc(4,ip)*fac
+          !
+       enddo
+       !
+       ! solve the small system of equations
+       !
+       do j = 2, 2*NPROC-2
+          !
+          fac     = r(j) / s(j-1)
+          s   (j) = s   (j) - fac*t   (j-1)
+          beta(j) = beta(j) - fac*beta(j-1)
+          !
+       enddo
+       !
+       alpha(2*NPROC-2) = beta(2*NPROC-2) / s(2*NPROC-2)
+       !
+       do j = 2*NPROC-3, 1, -1
+          !
+          alpha(j) = ( beta(j)-t(j)*alpha(j+1) ) / s(j)
+          !
+       enddo
+       !
+    endif
+    !
+    ! scatter alpha to all nodes
+    !
+    call SWBROADCD ( alpha, 2*(NPROC-1) )
+    if (STPNOW()) return
+    !
+    ! compute the solution
+    !
+    if ( INODE == 1 ) then
+       !
+       do m = mfu, mend
+          nm = kgrpnt(m)
+          x(nm) = x(nm) + alpha(1)*z12(nm)
+       enddo
+       !
+    else if ( INODE == NPROC ) then
+       !
+       do m = mfu, mend
+          nm = kgrpnt(m)
+          x(nm) = x(nm) + alpha(2*NPROC-2)*z22(nm)
+       enddo
+       !
+    else
+       !
+       do m = mfu, mend
+          nm = kgrpnt(m)
+          x(nm) = x(nm) + alpha(2*INODE-2)*z22(nm) + alpha(2*INODE-1)*z12(nm)
+       enddo
+       !
+    endif
+    !
+end subroutine dac2
+!
 subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
 !
 !   --|-----------------------------------------------------------|--
@@ -4378,7 +5325,7 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -4426,28 +5373,28 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
     use SwashCommdata3, only: mcgrd, mxc
     use SwashFlowdata, only: mfu, ml
     use m_parall
-    use SwashSolvedata, only: p0, p1, q0, q1, an, bn, cn, dn, vt
+    use SwashSolvedata, only: p0, p1, q0, q1, ba, da, sol, vt
 !
     implicit none
 !
 !   Argument variables
 !
-    integer, dimension(mxc), intent(in) :: kgrpnt ! index table containing the address of each (active) grid point
-                                                  ! =1: not active grid point
-                                                  ! >1: active grid point
+    integer, dimension(mxc) , intent(in   ) :: kgrpnt ! index table containing the address of each (active) grid point
+                                                      ! =1: not active grid point
+                                                      ! >1: active grid point
     !
-    real, dimension(mcgrd), intent(inout) :: a    ! lower diagonal of tri-diagonal matrix
-    real, dimension(mcgrd), intent(inout) :: b    ! main diagonal of tri-diagonal matrix
-    real, dimension(mcgrd), intent(inout) :: c    ! upper diagonal of tri-diagonal matrix
-    real, dimension(mcgrd), intent(inout) :: d    ! right-hand side of tri-diagonal system of equations
-    real, dimension(mcgrd), intent(in   ) :: lo   ! lower bound of solution
-    real, dimension(mcgrd), intent(in   ) :: up   ! upper bound of solution
-    real, dimension(mcgrd), intent(inout) :: x    ! solution of the system of equations
+    real*8, dimension(mcgrd), intent(in   ) :: a      ! lower diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(in   ) :: b      ! main diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(in   ) :: c      ! upper diagonal of tri-diagonal matrix
+    real*8, dimension(mcgrd), intent(in   ) :: d      ! right-hand side of tri-diagonal system of equations
+    real*8, dimension(mcgrd), intent(in   ) :: lo     ! lower bound of solution
+    real*8, dimension(mcgrd), intent(in   ) :: up     ! upper bound of solution
+    real  , dimension(mcgrd), intent(inout) :: x      ! solution of the system of equations
 !
 !   Parameter variables
 !
     integer, parameter :: maxnit = 100    ! maximum number of iterations
-    real   , parameter :: eps    = 1.e-8  ! convergence criterion
+    real*8 , parameter :: eps    = 1.d-14 ! convergence criterion
 !
 !   Local variables
 !
@@ -4458,8 +5405,7 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
     integer       :: mend     ! end index of loop over wl-points in x-direction
     integer       :: nm       ! pointer to m
     !
-    real          :: bi       ! inverse of main diagonal
-    real          :: rnorm    ! 2-norm of vector
+    real*8        :: rnorm    ! 2-norm of vector
 !
 !   Structure
 !
@@ -4476,7 +5422,7 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
     !
     ! set diagonal matrix q to zero
     !
-    q0 = 0.
+    q0 = 0d0
     !
     ! nested Newton iterations
     !
@@ -4484,40 +5430,25 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
        !
        ! set diagonal matrix p to identity
        !
-       p0 = 1.
+       p0 = 1d0
        !
        do k = 1, maxnit
           !
           ! set main diagonal and right-hand side
           !
-          bn = b + p0 - q0
-          dn = d - lo + p0*lo - q0*up
-          !
-          ! row scaling
-          !
-          do m = mfu, mend
-             !
-             nm = kgrpnt(m)
-             !
-             bi = 1./bn(nm)
-             !
-             an(nm) = a (nm)*bi
-             bn(nm) = 1.
-             cn(nm) = c (nm)*bi
-             dn(nm) = dn(nm)*bi
-             !
-          enddo
+          ba = b + p0 - q0
+          da = d - lo + p0*lo - q0*up
           !
           ! solve tri-diagonal system of equations by means of double sweep
           !
-          call tridiag ( an, bn, cn, dn, x, kgrpnt )
+          call tridiag2 ( a, ba, c, da, sol, kgrpnt )
           !
           ! update diagonal matrix p
           !
-          where ( .not. x < lo )
-             p1 = 1.
+          where ( .not. sol < lo )
+             p1 = 1d0
           elsewhere
-             p1 = 0.
+             p1 = 0d0
           end where
           !
           ! do a check for convergence
@@ -4526,9 +5457,9 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
           !
           ! check convergence
           !
-          vt = ( p1 - p0 ) * ( x - lo )
+          vt = ( p1 - p0 ) * ( sol - lo )
           !
-          rnorm = 0.
+          rnorm = 0d0
           !
           do m = mfu, mend
              !
@@ -4538,7 +5469,7 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
              !
           enddo
           !
-          call SWREDUCE ( rnorm, 1, SWREAL, SWSUM )
+          call SWREDUCD ( rnorm, 1, SWSUM )
           rnorm = sqrt(rnorm)
           !
           if ( .not. rnorm > eps ) exit
@@ -4549,17 +5480,17 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
        !
        ! update diagonal matrix q
        !
-       where ( x > up )
-          q1 = 1.
+       where ( sol > up )
+          q1 = 1d0
        elsewhere
-          q1 = 0.
+          q1 = 0d0
        end where
        !
        ! check convergence
        !
-       vt = ( q1 - q0 ) * ( x - up )
+       vt = ( q1 - q0 ) * ( sol - up )
        !
-       rnorm = 0.
+       rnorm = 0d0
        !
        do m = mfu, mend
           !
@@ -4569,7 +5500,7 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
           !
        enddo
        !
-       call SWREDUCE ( rnorm, 1, SWREAL, SWSUM )
+       call SWREDUCD ( rnorm, 1, SWSUM )
        rnorm = sqrt(rnorm)
        !
        if ( .not. rnorm > eps ) exit
@@ -4577,6 +5508,8 @@ subroutine newton1D ( a, b, c, d, lo, up, x, kgrpnt )
        q0 = q1
        !
     enddo
+    !
+    x = real(sol)
     !
     if ( ITEST >= 60 .and. INODE == MASTER ) write (PRINTF, 101) k, j
     !
@@ -4598,7 +5531,7 @@ subroutine newton2D ( amat, rhs, lo, up, x )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -4647,22 +5580,22 @@ subroutine newton2D ( amat, rhs, lo, up, x )
     use SwashFlowdata, only: mfu, ml, nfu, nl
     use m_genarr, only: kgrpnt
     use m_parall
-    use SwashSolvedata, only: p0, p1, q0, q1, amatn, rhsn, vt
+    use SwashSolvedata, only: p0, p1, q0, q1, amata, rhsa, sol, vt
 !
     implicit none
 !
 !   Argument variables
 !
-    real, dimension(mcgrd,5), intent(in   ) :: amat ! coefficient matrix of the system of equations
-    real, dimension(mcgrd  ), intent(in   ) :: lo   ! lower bound of solution
-    real, dimension(mcgrd  ), intent(in   ) :: rhs  ! right-hand side of the system of equations
-    real, dimension(mcgrd  ), intent(in   ) :: up   ! upper bound of solution
-    real, dimension(mcgrd  ), intent(inout) :: x    ! solution of the system of equations
+    real*8, dimension(mcgrd,5), intent(in   ) :: amat ! coefficient matrix of the system of equations
+    real*8, dimension(mcgrd  ), intent(in   ) :: lo   ! lower bound of solution
+    real*8, dimension(mcgrd  ), intent(in   ) :: rhs  ! right-hand side of the system of equations
+    real*8, dimension(mcgrd  ), intent(in   ) :: up   ! upper bound of solution
+    real  , dimension(mcgrd  ), intent(inout) :: x    ! solution of the system of equations
 !
 !   Parameter variables
 !
     integer, parameter :: maxnit = 100    ! maximum number of iterations
-    real   , parameter :: eps    = 1.e-8  ! convergence criterion
+    real*8 , parameter :: eps    = 1.d-14 ! convergence criterion
 !
 !   Local variables
 !
@@ -4675,7 +5608,7 @@ subroutine newton2D ( amat, rhs, lo, up, x )
     integer       :: nend     ! end index of loop over wl-points in y-direction
     integer       :: nm       ! pointer to m,n
     !
-    real          :: rnorm    ! 2-norm of vector
+    real*8        :: rnorm    ! 2-norm of vector
 !
 !   Structure
 !
@@ -4695,7 +5628,7 @@ subroutine newton2D ( amat, rhs, lo, up, x )
     !
     ! set diagonal matrix q to zero
     !
-    q0 = 0.
+    q0 = 0d0
     !
     ! nested Newton iterations
     !
@@ -4703,26 +5636,29 @@ subroutine newton2D ( amat, rhs, lo, up, x )
        !
        ! set diagonal matrix p to identity
        !
-       p0 = 1.
+       p0 = 1d0
        !
        do k = 1, maxnit
           !
-          ! set coefficient matrix and right-hand side
+          ! copy original coefficient matrix
           !
-          amatn      = amat
-          amatn(:,1) = amat(:,1) + p0 - q0
-          rhsn       = rhs       - lo + p0*lo - q0*up
+          amata = amat
+          !
+          ! set main diagonal and right-hand side
+          !
+          amata(:,1) = amat(:,1) + p0 - q0
+          rhsa       = rhs       - lo + p0*lo - q0*up
           !
           ! solve penta-diagonal system of equations by means of preconditioned CG method
           !
-          call pcg ( amatn, rhsn, x )
+          call pcg2 ( amata, rhsa, sol )
           !
           ! update diagonal matrix p
           !
-          where ( .not. x < lo )
-             p1 = 1.
+          where ( .not. sol < lo )
+             p1 = 1d0
           elsewhere
-             p1 = 0.
+             p1 = 0d0
           end where
           !
           ! do a check for convergence
@@ -4731,9 +5667,9 @@ subroutine newton2D ( amat, rhs, lo, up, x )
           !
           ! check convergence
           !
-          vt = ( p1 - p0 ) * ( x - lo )
+          vt = ( p1 - p0 ) * ( sol - lo )
           !
-          rnorm = 0.
+          rnorm = 0d0
           !
           do n = nfu, nend
              do m = mfu, mend
@@ -4745,7 +5681,7 @@ subroutine newton2D ( amat, rhs, lo, up, x )
              enddo
           enddo
           !
-          call SWREDUCE ( rnorm, 1, SWREAL, SWSUM )
+          call SWREDUCD ( rnorm, 1, SWSUM )
           rnorm = sqrt(rnorm)
           !
           if ( .not. rnorm > eps ) exit
@@ -4756,17 +5692,17 @@ subroutine newton2D ( amat, rhs, lo, up, x )
        !
        ! update diagonal matrix q
        !
-       where ( x > up )
-          q1 = 1.
+       where ( sol > up )
+          q1 = 1d0
        elsewhere
-          q1 = 0.
+          q1 = 0d0
        end where
        !
        ! check convergence
        !
-       vt = ( q1 - q0 ) * ( x - up )
+       vt = ( q1 - q0 ) * ( sol - up )
        !
-       rnorm = 0.
+       rnorm = 0d0
        !
        do n = nfu, nend
           do m = mfu, mend
@@ -4778,7 +5714,7 @@ subroutine newton2D ( amat, rhs, lo, up, x )
           enddo
        enddo
        !
-       call SWREDUCE ( rnorm, 1, SWREAL, SWSUM )
+       call SWREDUCD ( rnorm, 1, SWSUM )
        rnorm = sqrt(rnorm)
        !
        if ( .not. rnorm > eps ) exit
@@ -4786,6 +5722,8 @@ subroutine newton2D ( amat, rhs, lo, up, x )
        q0 = q1
        !
     enddo
+    !
+    x = real(sol)
     !
     if ( ITEST >= 60 .and. INODE == MASTER ) write (PRINTF, 101) k, j
     !

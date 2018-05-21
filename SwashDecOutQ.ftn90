@@ -11,7 +11,7 @@ subroutine SwashDecOutQ ( outr, ivtyp, rtype, psname, nvar, nvoqp, nvoqk, oqproc
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -171,14 +171,14 @@ subroutine SwashDecOutQ ( outr, ivtyp, rtype, psname, nvar, nvoqp, nvoqk, oqproc
           cycle varloop
        endif
        !
-       if ( kmax == 1 .and. ivtype > 50 ) then
+       if ( kmax == 1 .and. ivtype > 50 .and. ivtype < 100 ) then
           call msgerr (1, 'layer-dependent quantities will not be outputted!' )
           cycle varloop
        endif
        !
        if ( ovsvty(ivtype) <= 2 .and. .not.oqproc(ivtype) ) then
           ! output quantity is a scalar
-          if ( ivtype <= 50 ) then
+          if ( ivtype < 51 .or. ivtype > 99 ) then
              nvoqp = nvoqp + 1
              voqr(ivtype) = nvoqp
           else
@@ -187,7 +187,7 @@ subroutine SwashDecOutQ ( outr, ivtyp, rtype, psname, nvar, nvoqp, nvoqk, oqproc
           endif
        else if ( ovsvty(ivtype) == 3 .and. .not.oqproc(ivtype) ) then
           ! output quantity is a vector
-          if ( ivtype <= 50 ) then
+          if ( ivtype < 51 .or. ivtype > 99 ) then
              nvoqp = nvoqp + 2
              voqr(ivtype) = nvoqp - 1
           else
@@ -311,7 +311,7 @@ subroutine SwashDecOutQ ( outr, ivtyp, rtype, psname, nvar, nvoqp, nvoqk, oqproc
        !
        ! change type of output in case of table format and layer-dependent quantities
        !
-       if ( rtype(1:3) == 'TAB' .and. ivtype > 50 ) then
+       if ( rtype(1:3) == 'TAB' .and. ivtype > 50 .and. ivtype < 100 ) then
           !
           if ( rtype == 'TABS' ) then
              rtype = 'TABU'

@@ -11,7 +11,7 @@ subroutine SwashReadInput ( comput )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -120,7 +120,7 @@ subroutine SwashReadInput ( comput )
     real                               :: xp                 ! x-coordinate of subsequent points
     real                               :: yp                 ! y-coordinate of subsequent points
     !
-    real,dimension(7)                  :: qr                 ! user-defined parameters for output quantity (see command QUANT)
+    real,dimension(12)                 :: qr                 ! user-defined parameters for output quantity (see command QUANT)
     !
     character(18)                      :: DTTIWR             ! write time coding
     character(8)                       :: psname             ! name of point set
@@ -411,7 +411,7 @@ subroutine SwashReadInput ( comput )
        endif
        if ( nstatm > 0 ) chtime = DTTIWR(ITMOPT, timco)
        ncompt = ncompt + 1
-       if ( ncompt > 50 ) call msgerr (2, 'no more than 50 COMPUTE commands are allowed')
+       if ( ncompt > 300 ) call msgerr (2, 'no more than 300 COMPUTE commands are allowed')
        rcompt(ncompt,1) = dble(nstatc)
        rcompt(ncompt,2) = dble(mtc)
        rcompt(ncompt,3) = tfinc
@@ -428,7 +428,8 @@ subroutine SwashReadInput ( comput )
     !      [grav] [rhowat] [temp] [salinity] [dynvis] [rhoair]   &
     !      [rhosed] [cdcap] [prmean] [backvisc] [kappa]          &
     !      CORIolis  CARTesian/NAUTical                          &
-    !      [printf]  [prtest]  [outlev]
+    !      [printf]  [prtest] (not documented)                   &
+    !      [outlev]
     !
     ! ==========================================================================
     !
@@ -462,8 +463,11 @@ subroutine SwashReadInput ( comput )
        endif
        if ( KEYWIS ('CART') ) bnaut = .false.
        !
+!      the unit numbers PRINTF and PRTEST should be set in swashinit,
+!      so not documented
        call ININTG ('PRINTF', PRINTF, 'UNC', 0)
        call ININTG ('PRTEST', PRTEST, 'UNC', 0)
+       !
        call ININTG ('OUTLEV', iamout, 'UNC', 0)
        !
        goto 100
@@ -532,6 +536,9 @@ subroutine SwashReadInput ( comput )
     !       [ref]                 (for output quantity TSEC)
     !       [dur] SEC|MIN|HR|DAY  (for output quantity HSIG, SETUP, MVEL, MTKE)
     !       [depth]               (for output quantity HRUN)
+    !       [delrp]               (for output quantity RUNUP)
+    !       [xcom] [ycom] [zcom]  (for moments acting on floating body)
+    !       [alpobj]              (for forces and moments acting on rotated body)
     !       PROBLEM/FRAME         (for directions and vectors)
     !
     ! ==========================================================================
@@ -551,15 +558,20 @@ subroutine SwashReadInput ( comput )
           nullify(tmpq%nexti)
           currq%nexti => tmpq
           currq => tmpq
-          call INCSTR ('SHORT', qovsnm, 'STA', ' ')
-          call INCSTR ('LONG' , qovlnm, 'STA', ' ')
-          call INREAL ('LEXP' , qr(1) , 'STA',  999. )
-          call INREAL ('HEXP' , qr(2) , 'STA', -999. )
-          call INREAL ('EXCV' , qr(3) , 'STA',  999. )
-          call INCTIM (ITMOPT , 'REF' , rtmp, 'STA', -9.99d2)
+          call INCSTR ('SHORT' , qovsnm, 'STA', ' ')
+          call INCSTR ('LONG'  , qovlnm, 'STA', ' ')
+          call INREAL ('LEXP'  , qr(1) , 'STA',  999. )
+          call INREAL ('HEXP'  , qr(2) , 'STA', -999. )
+          call INREAL ('EXCV'  , qr(3) , 'STA',  999. )
+          call INCTIM (ITMOPT  , 'REF' , rtmp, 'STA', -9.99d2)
           qr(4) = real(rtmp)
-          call ININTV ('DUR'  , qr(5) , 'STA', -999. )
-          call INREAL ('DEPTH', qr(6) , 'STA', -999. )
+          call ININTV ('DUR'   , qr(5) , 'STA', -999. )
+          call INREAL ('DEPTH' , qr(6) , 'STA', -999. )
+          call INREAL ('DELRP' , qr(12), 'STA', -999. )
+          call INREAL ('XCOM'  , qr(8) , 'STA',    0. )
+          call INREAL ('YCOM'  , qr(9) , 'STA',    0. )
+          call INREAL ('ZCOM'  , qr(10), 'STA',    0. )
+          call INREAL ('ALPOBJ', qr(11), 'STA',    0. )
           call INKEYW ('STA', ' ')
           if ( KEYWIS('PROBLEM') .or. KEYWIS('USER') ) then
              qr(7) = 0.
@@ -618,6 +630,18 @@ subroutine SwashReadInput ( comput )
              endif
              if ( ivtype == 21 ) then
                 if ( qr(6) /= -999. ) hrunp = qr(6)
+             endif
+             if ( ivtype >= 104 .and. ivtype <= 112 ) then
+                cogx = qr(8)
+                cogy = qr(9)
+                cogz = qr(10)
+             endif
+             if ( ivtype >= 101 .and. ivtype <= 112 ) then
+                alpobj = qr(11)
+                alpobj = pi2 * (alpobj/360. - nint(alpobj/360.))
+             endif
+             if ( ivtype == 113 ) then
+                if ( qr(12) /= -999. ) delrp = qr(12)
              endif
              if ( ovsvty(ivtype) == 2 .or. ovsvty(ivtype) == 3 ) then
                 !
@@ -833,6 +857,21 @@ subroutine SwashReadInput ( comput )
     !
     ! ==========================================================================
     !
+    ! FLOAT [alpha] [theta]
+    !
+    ! ==========================================================================
+    !
+    if ( KEYWIS ('SHIP') .or. KEYWIS ('FLOAT') .or. KEYWIS ('OBST') .or. KEYWIS ('PONT') .or. KEYWIS ('PFLOW') ) then
+       !
+       call INREAL ( 'ALPHA', pship(1), 'STA', 0. )
+       call INREAL ( 'THETA', pship(2), 'STA', 1. )
+       !
+       goto 100
+       !
+    endif
+    !
+    ! ==========================================================================
+    !
     !                             | -> CONstant [visc]
     !                             |
     !            | -> Horizontal <     SMAGorinsky [cs]
@@ -878,7 +917,7 @@ subroutine SwashReadInput ( comput )
     !
     ! ==========================================================================
     !
-    ! VEGEtation   < [height]  [diamtr]  [nstems]  [drag] >  INERtia [cm]
+    ! VEGEtation  < [height]  [diamtr]  [nstems]  [drag] > INERtia [cm]  PORO  V
     !
     ! ==========================================================================
     !
@@ -927,6 +966,12 @@ subroutine SwashReadInput ( comput )
        if ( KEYWIS ('INER') .or. KEYWIS ('MASS') ) then
           call INREAL ('CM', cvm, 'REQ', 0.)
        endif
+       !
+       call INKEYW ('STA', ' ')
+       if ( KEYWIS ('PORO') ) iveg = 2
+       !
+       call INKEYW ('STA', ' ')
+       if ( KEYWIS ('V') ) ivegw = 1
        !
        if ( lmax == 0 ) call msgerr (2,'no vegetation parameters found')
        !
@@ -1053,7 +1098,7 @@ subroutine SwashReadInput ( comput )
     !
     !                 PREConditioner  ILUDS|ILUD|ILU|NONE                      &
     !
-    !                 PROJection (not documented)
+    !                 PROJection  ITERative [tol] [maxiter]
     !
     ! ==========================================================================
     !
@@ -1126,6 +1171,14 @@ subroutine SwashReadInput ( comput )
        call INKEYW ('STA', ' ')
        if (KEYWIS ('PROJ')) then
           iproj = 2
+          !
+          call INKEYW ('STA',' ')
+          if ( KEYWIS ('ITER') ) lpproj = .true.
+          !
+          call INREAL('TOL'    , pnums(58), 'STA', 0.0001)
+          call ININTG('MAXITER', itmp1    , 'STA', 50    )
+          pnums(59) = real(itmp1)
+          !
        endif
        !
        goto 100
@@ -1232,7 +1285,9 @@ subroutine SwashReadInput ( comput )
     !
     !             | -> EXPL [cfllow] [cflhig]                                 |
     ! TIMEI METH <                                                             > &
-    !             |    IMPL [thetac] [thetas] SOLVer [tol] [maxiter] [weight] |
+    !             |    IMPL [thetac] [thetas] &                               |
+    !             |                                                           |
+    !             |         SOLVer [tol] [maxiter] [weight]  NEWTon           |
     !
     !       VERTical [thetau] [thetaw] [thetat]
     !
@@ -1255,6 +1310,9 @@ subroutine SwashReadInput ( comput )
                 call INREAL('WEIGHT' , pnums(26), 'STA', 0.9 )
                 pnums(24) = real(itmp1)
              endif
+             !
+             call INKEYW ('STA',' ')
+             if ( KEYWIS ('NEWT') ) newton = .true.
           else
              call IGNORE ('EXPL')
              mtimei = 1
@@ -1682,7 +1740,7 @@ subroutine SwashReadInput ( comput )
     !
     ! INPgrid                                                                &
     !    BOTtom/WLEVel/CURrent/VX/VY/FRic/WInd/WX/WY/PRes/PORO/PSIZ/HSTRUC/  &
-    !    NPLAnts/SALinity/TEMPerature/SEDiment                               &
+    !    NPLAnts/FLOAT/SALinity/TEMPerature/SEDiment                         &
     !    | REG [xpinp] [ypinp] [alpinp]  [mxinp] [myinp]  [dxinp] [dyinp] |
     !   <  CURVilinear [stagrx] [stagry] [mxinp] [myinp]                   > &
     !    | UNSTRUCtured                                                   |
@@ -1753,6 +1811,9 @@ subroutine SwashReadInput ( comput )
        else if ( KEYWIS ('SED') ) then
           igrd   = 17
           psname = 'SEDGRID'
+       else if ( KEYWIS ('SHIP') .or. KEYWIS ('FLOAT') .or. KEYWIS ('OBST') .or. KEYWIS ('PONT') .or. KEYWIS ('PFLOW') ) then
+          igrd   = 18
+          psname = 'SHIPGRID'
        else
           igrd   = 1
           psname = 'BOTTGRID'
@@ -1767,7 +1828,7 @@ subroutine SwashReadInput ( comput )
     ! ==========================================================================
     !
     ! READinp  BOTtom/WLevel/CURrent/FRiction/WInd/PRes/COOR/PORO/PSIZ/HSTRUC/ &
-    !          NPLAnts/SALinity/TEMPerature/SEDiment                           &
+    !          NPLAnts/FLOAT/SALinity/TEMPerature/SEDiment                     &
     !      [fac]  / 'fname1'        \
     !             \ SERIES 'fname2' /  [idla] [nhedf] ([nhedt]) (nhedvec])     &
     !      FREE / FORMAT 'form' / [idfm] / UNFORMATTED
@@ -1968,6 +2029,26 @@ subroutine SwashReadInput ( comput )
     if ( KEYWRD == '    ' ) goto 100
     !
     found = .false.
+    !
+    ! no grid - single point - is included in output data
+    !
+    allocate(opstmp)
+    opstmp%psname = 'NOGRID'
+    opstmp%pstype = 'P'
+    opstmp%mip = 1
+    allocate(opstmp%xp(1))
+    allocate(opstmp%yp(1))
+    opstmp%xp(1) = 0.
+    opstmp%yp(1) = 0.
+    nullify(opstmp%nextops)
+    if ( .not.lops ) then
+       fops = opstmp
+       cops => fops
+       lops = .true.
+    else
+       cops%nextops => opstmp
+       cops => opstmp
+    endif
     !
     ! process output locations
     !

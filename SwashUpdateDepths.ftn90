@@ -11,7 +11,7 @@ subroutine SwashUpdateDepths ( u, v )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -32,10 +32,12 @@ subroutine SwashUpdateDepths ( u, v )
 !   Authors
 !
 !    1.00: Marcel Zijlema
+!    4.05: Dirk Rijnsdorp
 !
 !   Updates
 !
-!    1.00, March 2010: New subroutine
+!    1.00,   March 2010: New subroutine
+!    4.05, January 2017: extension floating objects
 !
 !   Purpose
 !
@@ -131,6 +133,10 @@ subroutine SwashUpdateDepths ( u, v )
              !
           endif
           !
+          ! adapt water depth to include floating object
+          !
+          if ( ifloat /= 0 ) hs(nm) = min( dps(nm)-flos(nm), hs(nm) )
+          !
        enddo
        !
        ! exchange water depth in wl-point with neighbouring subdomains
@@ -218,6 +224,28 @@ subroutine SwashUpdateDepths ( u, v )
                 !
              endif
              !
+             if ( ifloat /= 0 ) then
+                !
+                hu(nm) = min( dpu(nm)-flou(nm), hu(nm) )
+                !
+                if ( .not. hu(nm) < dpu(nm) - flou(nm) ) then
+                   !
+                   if ( hs(nm) < dps(nm) - flos(nm) ) then
+                      !
+                      hu(nm) = 0.5 * ( hs(nm) + hs(nmu) )
+                      !
+                   endif
+                   !
+                   if ( hs(nmu) < dps(nmu) - flos(nmu) ) then
+                      !
+                      hu(nm) = 0.5 * ( hs(nm) + hs(nmu) )
+                      !
+                   endif
+                   !
+                endif
+                !
+             endif
+             !
           enddo
           !
        else
@@ -249,29 +277,33 @@ subroutine SwashUpdateDepths ( u, v )
              nmu  = kgrpnt(mu ,1)
              nmuu = kgrpnt(muu,1)
              !
-             if ( u(nm) > 1.0e-5 ) then
+             if ( ifloat /= 1 .or. hu(nm) < ( dpu(nm) - flou(nm) ) ) then
                 !
-                depmin = min( dps(nmd), dps(nm), dps(nmu) )
-                s1min  = min( s1 (nmd), s1 (nm), s1 (nmu) )
-                !
-                if ( s1min + depmin < 0. ) cycle uloop
-                !
-                grad1 = s1(nmu) - s1(nm )
-                grad2 = s1(nm ) - s1(nmd)
-                !
-                hu(nm) = hu(nm) + 0.5 * fluxlim(grad1,grad2)
-                !
-             else if ( u(nm) < -1.0e-5 ) then
-                !
-                depmin = min( dps(nm), dps(nmu), dps(nmuu) )
-                s1min  = min( s1 (nm), s1 (nmu), s1 (nmuu) )
-                !
-                if ( s1min + depmin < 0. ) cycle uloop
-                !
-                grad1 = s1(nmu ) - s1(nm )
-                grad2 = s1(nmuu) - s1(nmu)
-                !
-                hu(nm) = hu(nm) - 0.5 * fluxlim(grad1,grad2)
+                if ( u(nm) > 1.0e-5 ) then
+                   !
+                   depmin = min( dps(nmd), dps(nm), dps(nmu) )
+                   s1min  = min( s1 (nmd), s1 (nm), s1 (nmu) )
+                   !
+                   if ( s1min + depmin < 0. ) cycle uloop
+                   !
+                   grad1 = s1(nmu) - s1(nm )
+                   grad2 = s1(nm ) - s1(nmd)
+                   !
+                   hu(nm) = hu(nm) + 0.5 * fluxlim(grad1,grad2)
+                   !
+                else if ( u(nm) < -1.0e-5 ) then
+                   !
+                   depmin = min( dps(nm), dps(nmu), dps(nmuu) )
+                   s1min  = min( s1 (nm), s1 (nmu), s1 (nmuu) )
+                   !
+                   if ( s1min + depmin < 0. ) cycle uloop
+                   !
+                   grad1 = s1(nmu ) - s1(nm )
+                   grad2 = s1(nmuu) - s1(nmu)
+                   !
+                   hu(nm) = hu(nm) - 0.5 * fluxlim(grad1,grad2)
+                   !
+                endif
                 !
              endif
              !
@@ -315,6 +347,10 @@ subroutine SwashUpdateDepths ( u, v )
                 hs(nm) = s1(nm) + dps(nm)
                 !
              endif
+             !
+             ! adapt water depth to include floating object
+             !
+             if ( ifloat /= 0 ) hs(nm) = min( dps(nm)-flos(nm), hs(nm) )
              !
           enddo
        enddo
@@ -459,6 +495,28 @@ subroutine SwashUpdateDepths ( u, v )
                    !
                 endif
                 !
+                if ( ifloat /= 0 ) then
+                   !
+                   hu(nm) = min( dpu(nm)-flou(nm), hu(nm) )
+                   !
+                   if ( .not. hu(nm) < dpu(nm) - flou(nm) ) then
+                      !
+                      if ( hs(nm) < dps(nm) - flos(nm) ) then
+                         !
+                         hu(nm) = 0.5 * ( hs(nm) + hs(nmu) )
+                         !
+                      endif
+                      !
+                      if ( hs(nmu) < dps(nmu) - flos(nmu) ) then
+                         !
+                         hu(nm) = 0.5 * ( hs(nm) + hs(nmu) )
+                         !
+                      endif
+                      !
+                   endif
+                   !
+                endif
+                !
              enddo
           enddo
           !
@@ -497,6 +555,29 @@ subroutine SwashUpdateDepths ( u, v )
                 else
                    !
                    hv(nm) = max( s1(nm), s1(num) ) + dpv(nm)
+                   !
+                endif
+                !
+                !
+                if ( ifloat /= 0 ) then
+                   !
+                   hv(nm) = min( dpv(nm)-flov(nm), hv(nm) )
+                   !
+                   if ( .not. hv(nm) < dpv(nm) - flov(nm) ) then
+                      !
+                      if ( hs(nm) < dps(nm) - flos(nm) ) then
+                         !
+                         hv(nm) = 0.5 * ( hs(nm) + hs(num) )
+                         !
+                      endif
+                      !
+                      if ( hs(num) < dps(num) - flos(num) ) then
+                         !
+                         hv(nm) = 0.5 * ( hs(nm) + hs(num) )
+                         !
+                      endif
+                      !
+                   endif
                    !
                 endif
                 !
@@ -548,29 +629,33 @@ subroutine SwashUpdateDepths ( u, v )
                 if ( nmu  == 1 ) nmu  = nm
                 if ( nmuu == 1 ) nmuu = nmu
                 !
-                if ( u(nm) > 1.0e-5 ) then
+                if ( ifloat /= 1 .or. hu(nm) < ( dpu(nm) - flou(nm) ) ) then
                    !
-                   depmin = min( dps(nmd), dps(nm), dps(nmu) )
-                   s1min  = min( s1 (nmd), s1 (nm), s1 (nmu) )
-                   !
-                   if ( s1min + depmin < 0. ) cycle uuloop
-                   !
-                   grad1 = s1(nmu) - s1(nm )
-                   grad2 = s1(nm ) - s1(nmd)
-                   !
-                   hu(nm) = hu(nm) + 0.5 * fluxlim(grad1,grad2)
-                   !
-                else if ( u(nm) < -1.0e-5 ) then
-                   !
-                   depmin = min( dps(nm), dps(nmu), dps(nmuu) )
-                   s1min  = min( s1 (nm), s1 (nmu), s1 (nmuu) )
-                   !
-                   if ( s1min + depmin < 0. ) cycle uuloop
-                   !
-                   grad1 = s1(nmu ) - s1(nm )
-                   grad2 = s1(nmuu) - s1(nmu)
-                   !
-                   hu(nm) = hu(nm) - 0.5 * fluxlim(grad1,grad2)
+                   if ( u(nm) > 1.0e-5 ) then
+                      !
+                      depmin = min( dps(nmd), dps(nm), dps(nmu) )
+                      s1min  = min( s1 (nmd), s1 (nm), s1 (nmu) )
+                      !
+                      if ( s1min + depmin < 0. ) cycle uuloop
+                      !
+                      grad1 = s1(nmu) - s1(nm )
+                      grad2 = s1(nm ) - s1(nmd)
+                      !
+                      hu(nm) = hu(nm) + 0.5 * fluxlim(grad1,grad2)
+                      !
+                   else if ( u(nm) < -1.0e-5 ) then
+                      !
+                      depmin = min( dps(nm), dps(nmu), dps(nmuu) )
+                      s1min  = min( s1 (nm), s1 (nmu), s1 (nmuu) )
+                      !
+                      if ( s1min + depmin < 0. ) cycle uuloop
+                      !
+                      grad1 = s1(nmu ) - s1(nm )
+                      grad2 = s1(nmuu) - s1(nmu)
+                      !
+                      hu(nm) = hu(nm) - 0.5 * fluxlim(grad1,grad2)
+                      !
+                   endif
                    !
                 endif
                 !
@@ -608,29 +693,33 @@ subroutine SwashUpdateDepths ( u, v )
                 if ( num  == 1 ) num  = nm
                 if ( nuum == 1 ) nuum = num
                 !
-                if ( v(nm) > 1.0e-5 ) then
+                if ( ifloat /= 1 .or. hv(nm) < ( dpv(nm) - flov(nm) ) ) then
                    !
-                   depmin = min( dps(ndm), dps(nm), dps(num) )
-                   s1min  = min( s1 (ndm), s1 (nm), s1 (num) )
-                   !
-                   if ( s1min + depmin < 0. ) cycle vloop
-                   !
-                   grad1 = s1(num) - s1(nm )
-                   grad2 = s1(nm ) - s1(ndm)
-                   !
-                   hv(nm) = hv(nm) + 0.5 * fluxlim(grad1,grad2)
-                   !
-                else if ( v(nm) < -1.0e-5 ) then
-                   !
-                   depmin = min( dps(nm), dps(num), dps(nuum) )
-                   s1min  = min( s1 (nm), s1 (num), s1 (nuum) )
-                   !
-                   if ( s1min + depmin < 0. ) cycle vloop
-                   !
-                   grad1 = s1(num ) - s1(nm )
-                   grad2 = s1(nuum) - s1(num)
-                   !
-                   hv(nm) = hv(nm) - 0.5 * fluxlim(grad1,grad2)
+                   if ( v(nm) > 1.0e-5 ) then
+                      !
+                      depmin = min( dps(ndm), dps(nm), dps(num) )
+                      s1min  = min( s1 (ndm), s1 (nm), s1 (num) )
+                      !
+                      if ( s1min + depmin < 0. ) cycle vloop
+                      !
+                      grad1 = s1(num) - s1(nm )
+                      grad2 = s1(nm ) - s1(ndm)
+                      !
+                      hv(nm) = hv(nm) + 0.5 * fluxlim(grad1,grad2)
+                      !
+                   else if ( v(nm) < -1.0e-5 ) then
+                      !
+                      depmin = min( dps(nm), dps(num), dps(nuum) )
+                      s1min  = min( s1 (nm), s1 (num), s1 (nuum) )
+                      !
+                      if ( s1min + depmin < 0. ) cycle vloop
+                      !
+                      grad1 = s1(num ) - s1(nm )
+                      grad2 = s1(nuum) - s1(num)
+                      !
+                      hv(nm) = hv(nm) - 0.5 * fluxlim(grad1,grad2)
+                      !
+                   endif
                    !
                 endif
                 !

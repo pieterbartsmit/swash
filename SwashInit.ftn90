@@ -11,7 +11,7 @@ subroutine SwashInit ( inerr )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -77,9 +77,9 @@ subroutine SwashInit ( inerr )
 !   Source text
 !
     VERTXT = BLANK
-    VERNUM = 4.01
+    VERNUM = 5.01
     write (VERTXT, '(f5.2)') VERNUM
-    call BUGFIX ('A')
+    !call BUGFIX ('A')
     !
     call OCPINI ( 'swashinit', .true., inerr )
     if ( inerr > 0 ) return
@@ -289,9 +289,10 @@ subroutine SwashInit ( inerr )
     !
     ! vegetation
     !
-    iveg = 0
-    lmax = 0
-    cvm  = 0.
+    iveg  = 0
+    ivegw = 0
+    lmax  = 0
+    cvm   = 0.
     !
     ! control wave breaking
     !
@@ -308,6 +309,13 @@ subroutine SwashInit ( inerr )
     ppor(2) = 99999.
     ppor(3) = 200.
     ppor(4) = 1.1
+    !
+    ! floating objects
+    !
+    ifloat   = 0
+    pship    = 0.
+    pship(1) = 0.
+    pship(2) = 1.
     !
     ! transport of constituent
     !
@@ -373,8 +381,14 @@ subroutine SwashInit ( inerr )
     ! parameters for non-hydrostatic computation
     !
     ihydro   = 0
-    iproj    = 1
+    iproj    = -999
     pnums(5) = -1.
+    !
+    ! parameters for pressure projection method
+    !
+    lpproj = .false.
+    pnums(58) = 0.0001
+    pnums(59) = 50.
     !
     qlay = 0
     qmax = 1
@@ -382,7 +396,7 @@ subroutine SwashInit ( inerr )
     ! parameters for linear solvers
     !
     iamout    = 0
-    icond     = 2
+    icond     = -999
     pnums(21) = 0.01
     pnums(22) = 0.01
     pnums(23) = 0.
@@ -424,6 +438,20 @@ subroutine SwashInit ( inerr )
     ! inundation depth for horizontal runup
     !
     hrunp = -999.
+    !
+    ! threshold depth for runup level
+    !
+    delrp = -999.
+    !
+    ! center of gravity of floating object for computing moments
+    !
+    cogx = 0.
+    cogy = 0.
+    cogz = 0.
+    !
+    ! rotation angle of floating object for computing forces and moments
+    !
+    alpobj = 0.
     !
     ! plot output
     !
@@ -997,6 +1025,18 @@ subroutine SwashInit ( inerr )
     ovhexp(ivtype) = 2.
     ovexcv(ivtype) = -99.
     !
+    ivtype = 46
+    ovkeyw(ivtype) = 'DRAF'
+    ovsnam(ivtype) = 'Draft'
+    ovlnam(ivtype) = 'Draft of floating object'
+    ovunit(ivtype) = uh
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -100.
+    ovhexp(ivtype) = 100.
+    ovexcv(ivtype) = -99.
+    !
     ivtype = 50
     ovkeyw(ivtype) = 'AAAA'
     ovsnam(ivtype) = 'Aux'
@@ -1408,6 +1448,164 @@ subroutine SwashInit ( inerr )
     ovlexp(ivtype) = 0.
     ovhexp(ivtype) = 1.e4
     ovexcv(ivtype) = -99.
+    !
+    ! hydrodynamic forces and moments
+    !
+    ivtype = 101
+    ovkeyw(ivtype) = 'FORCEX'
+    ovsnam(ivtype) = 'Fx'
+    ovlnam(ivtype) = 'Force in x-direction'
+    ovunit(ivtype) = 'N'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 102
+    ovkeyw(ivtype) = 'FORCEY'
+    ovsnam(ivtype) = 'Fy'
+    ovlnam(ivtype) = 'Force in y-direction'
+    ovunit(ivtype) = 'N'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 103
+    ovkeyw(ivtype) = 'FORCEZ'
+    ovsnam(ivtype) = 'Fz'
+    ovlnam(ivtype) = 'Force in z-direction'
+    ovunit(ivtype) = 'N'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -1000.
+    ovhexp(ivtype) = 1000.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 104
+    ovkeyw(ivtype) = 'MOMX'
+    ovsnam(ivtype) = 'Mx'
+    ovlnam(ivtype) = 'Moment in x-direction'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 105
+    ovkeyw(ivtype) = 'MOMY'
+    ovsnam(ivtype) = 'My'
+    ovlnam(ivtype) = 'Moment in y-direction'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 106
+    ovkeyw(ivtype) = 'MOMZ'
+    ovsnam(ivtype) = 'Mz'
+    ovlnam(ivtype) = 'Moment in z-direction'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 107
+    ovkeyw(ivtype) = 'MOMXY'
+    ovsnam(ivtype) = 'Mxy'
+    ovlnam(ivtype) = 'Moment in x-direction due y-force'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 108
+    ovkeyw(ivtype) = 'MOMXZ'
+    ovsnam(ivtype) = 'Mxz'
+    ovlnam(ivtype) = 'Moment in x-direction due z-force'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 109
+    ovkeyw(ivtype) = 'MOMYX'
+    ovsnam(ivtype) = 'Myx'
+    ovlnam(ivtype) = 'Moment in y-direction due x-force'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 110
+    ovkeyw(ivtype) = 'MOMYZ'
+    ovsnam(ivtype) = 'Myz'
+    ovlnam(ivtype) = 'Moment in y-direction due z-force'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 111
+    ovkeyw(ivtype) = 'MOMZX'
+    ovsnam(ivtype) = 'Mzx'
+    ovlnam(ivtype) = 'Moment in z-direction due x-force'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 112
+    ovkeyw(ivtype) = 'MOMZY'
+    ovsnam(ivtype) = 'Mzy'
+    ovlnam(ivtype) = 'Moment in z-direction due y-force'
+    ovunit(ivtype) = 'Nm'
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e-4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -2.
+    ovhexp(ivtype) = 2.
+    ovexcv(ivtype) = -99.
+    !
+    ivtype = 113
+    ovkeyw(ivtype) = 'RUNUP'
+    ovsnam(ivtype) = 'Runlev'
+    ovlnam(ivtype) = 'Runup height'
+    ovunit(ivtype) = uh
+    ovsvty(ivtype) = 1
+    ovllim(ivtype) = -1.e4
+    ovulim(ivtype) = 1.e4
+    ovlexp(ivtype) = -100.
+    ovhexp(ivtype) = 100.
+    ovexcv(ivtype) = -9999.
     !
     ! various parameters for computation of output quantities
     !

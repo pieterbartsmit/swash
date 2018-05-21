@@ -25,7 +25,6 @@ if ($os =~ /IRIX64/i) {
   print OUTFILE "LIBS_SER =\n";
   print OUTFILE "LIBS_OMP =\n";
   print OUTFILE "LIBS_MPI = -lmpi\n";
-  print OUTFILE "O_DIR = ../work/odir4/\n";
   print OUTFILE "OUT = -o \n";
   print OUTFILE "EXTO = o\n";
   print OUTFILE "MAKE = make\n";
@@ -52,7 +51,6 @@ elsif ($os =~ /AIX/i) {
   print OUTFILE "LIBS_SER = -lessl -lmass\n";
   print OUTFILE "LIBS_OMP = -lessl -lmass\n";
   print OUTFILE "LIBS_MPI = -lessl -lmass\n";
-  print OUTFILE "O_DIR = ../work/odir4/\n";
   print OUTFILE "OUT = -o \n";
   print OUTFILE "EXTO = o\n";
   print OUTFILE "MAKE = make\n";
@@ -78,7 +76,6 @@ elsif ($os =~ /OSF1/i) {
   print OUTFILE "LIBS_SER =\n";
   print OUTFILE "LIBS_OMP =\n";
   print OUTFILE "LIBS_MPI = -lfmpi -lmpi -lelan\n";
-  print OUTFILE "O_DIR = ../work/odir4/\n";
   print OUTFILE "OUT = -o \n";
   print OUTFILE "EXTO = o\n";
   print OUTFILE "MAKE = make\n";
@@ -104,7 +101,6 @@ elsif ($os =~ /SunOS/i) {
   print OUTFILE "LIBS_SER =\n";
   print OUTFILE "LIBS_OMP =\n";
   print OUTFILE "LIBS_MPI = -lmpi\n";
-  print OUTFILE "O_DIR = ../work/odir4/\n";
   print OUTFILE "OUT = -o \n";
   print OUTFILE "EXTO = o\n";
   print OUTFILE "MAKE = make\n";
@@ -130,7 +126,6 @@ elsif ($os =~ /HP-UX/i) {
   print OUTFILE "LIBS_SER =\n";
   print OUTFILE "LIBS_OMP =\n";
   print OUTFILE "LIBS_MPI =\n";
-  print OUTFILE "O_DIR =\n";
   print OUTFILE "OUT = -o \n";
   print OUTFILE "EXTO = o\n";
   print OUTFILE "MAKE = make\n";
@@ -160,7 +155,7 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "FLAGS_MSC = -W0 -assume byterecl -traceback -diag-disable 8290 -diag-disable 8291 -diag-disable 8293\n";
     print OUTFILE "FLAGS90_MSC = \$(FLAGS_MSC)\n";
     print OUTFILE "FLAGS_SER =\n";
-    print OUTFILE "FLAGS_OMP = -openmp\n";
+    print OUTFILE "FLAGS_OMP = -qopenmp\n";
     print OUTFILE "FLAGS_MPI =\n";
     print OUTFILE "INCS_SER =\n";
     print OUTFILE "INCS_OMP =\n";
@@ -168,7 +163,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR = ../work/odir4/\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -196,7 +190,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR = ../work/odir4/\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -224,7 +217,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR = ../work/odir4/\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -251,7 +243,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR = ../work/odir4/\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -278,7 +269,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR =\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -305,7 +295,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP = -static-libgcc\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR = ../work/odir4/\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -332,7 +321,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR = ../work/odir4/\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -359,7 +347,6 @@ elsif ($os =~ /Linux/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR = ../work/odir4/\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -394,7 +381,6 @@ elsif ($os =~ /WindowsNT/i || $os =~ /MSWin32/i || $os =~ /CYGWIN/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI = C:\\\PROGRA~1\\\MPICH2\\\llib\\\lfmpich2.lib\n";
-    print OUTFILE "O_DIR =\n";
     print OUTFILE "OUT = /exe:\n";
     print OUTFILE "EXTO = obj\n";
     print OUTFILE "MAKE = nmake\n";
@@ -421,7 +407,6 @@ elsif ($os =~ /WindowsNT/i || $os =~ /MSWin32/i || $os =~ /CYGWIN/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI = C:\\\PROGRA~1\\\MPICH2\\\llib\\\lfmpich2.lib\n";
-    print OUTFILE "O_DIR =\n";
     print OUTFILE "OUT = /exe:\n";
     print OUTFILE "EXTO = obj\n";
     print OUTFILE "MAKE = nmake\n";
@@ -438,7 +423,7 @@ elsif ($os =~ /Darwin/i) {
   if ( $compiler eq "gfortran" )
   {
     print OUTFILE "##############################################################################\n";
-    print OUTFILE "# MAC_GNU:		MAC OS X Apple with GNU compiler gfortran.\n";
+    print OUTFILE "# MAC_GNU:		macOS with GNU compiler gfortran.\n";
     print OUTFILE "##############################################################################\n";
     print OUTFILE "F90_SER = gfortran\n";
     print OUTFILE "F90_OMP = gfortran\n";
@@ -455,7 +440,6 @@ elsif ($os =~ /Darwin/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP = -static-libgcc\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR =\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -465,7 +449,7 @@ elsif ($os =~ /Darwin/i) {
   elsif ( $compiler eq "ifort" )
   {
     print OUTFILE "##############################################################################\n";
-    print OUTFILE "# MAC_Intel:		MAC OS X Apple with Intel compiler 11.\n";
+    print OUTFILE "# MAC_Intel:		macOS with Intel compiler 17.\n";
     print OUTFILE "##############################################################################\n";
     print OUTFILE "F90_SER = ifort\n";
     print OUTFILE "F90_OMP = ifort\n";
@@ -474,7 +458,7 @@ elsif ($os =~ /Darwin/i) {
     print OUTFILE "FLAGS_MSC = -W0 -assume byterecl -traceback -diag-disable 8290 -diag-disable 8291 -diag-disable 8293\n";
     print OUTFILE "FLAGS90_MSC = \$(FLAGS_MSC)\n";
     print OUTFILE "FLAGS_SER =\n";
-    print OUTFILE "FLAGS_OMP = -openmp\n";
+    print OUTFILE "FLAGS_OMP = -qopenmp\n";
     print OUTFILE "FLAGS_MPI =\n";
     print OUTFILE "INCS_SER =\n";
     print OUTFILE "INCS_OMP =\n";
@@ -482,7 +466,6 @@ elsif ($os =~ /Darwin/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR =\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -492,7 +475,7 @@ elsif ($os =~ /Darwin/i) {
   elsif ( $compiler eq "xlf90" )
   {
     print OUTFILE "##############################################################################\n";
-    print OUTFILE "# MAC_IBM:		MAC OS X Apple with IBM Compiler.\n";
+    print OUTFILE "# MAC_IBM:		Mac OS X with IBM Compiler.\n";
     print OUTFILE "##############################################################################\n";
     print OUTFILE "F90_SER = xlf90\n";
     print OUTFILE "F90_OMP =\n";
@@ -509,7 +492,6 @@ elsif ($os =~ /Darwin/i) {
     print OUTFILE "LIBS_SER =\n";
     print OUTFILE "LIBS_OMP =\n";
     print OUTFILE "LIBS_MPI =\n";
-    print OUTFILE "O_DIR =\n";
     print OUTFILE "OUT = -o \n";
     print OUTFILE "EXTO = o\n";
     print OUTFILE "MAKE = make\n";
@@ -535,7 +517,7 @@ sub getcmpl {
    my $compiler = $ENV{'FC'};
 
    unless ( $compiler ) {
-      foreach ('ifort','f90','ifc','efc','pgf90','xlf90', 'lf95','gfortran','g95') {
+      foreach ('ifort','gfortran','f90','ifc','efc','pgf90','xlf90', 'lf95','g95') {
          $compiler = $_;
          my $path  = `which $compiler`;
          last if $path;

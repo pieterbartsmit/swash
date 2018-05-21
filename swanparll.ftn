@@ -7,12 +7,17 @@
 !     SWEXITMPI
 !     SWSYNC
 !     SWSENDNB
+!     SWSENDNBD
 !     SWRECVNB
+!     SWRECVNBD
 !     SWBROADC
+!     SWBROADCD
 !     SWGATHER
+!     SWGATHERD
 !     SWREDUCE
 !     SWREDUCI
 !     SWREDUCR
+!     SWREDUCD
 !     SWSTRIP
 !     SWORB
 !     SWPARTIT
@@ -21,6 +26,7 @@
 !     SWDECOMP
 !     SWEXCHG
 !     SWEXCHGI
+!     SWEXCHGD
 !     SWRECVFLD
 !     SWSENDFLD
 !     SWCOLLECT
@@ -52,7 +58,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -197,6 +203,7 @@
 !MPI
 !MPI      SWINT  = MPI_INTEGER
 !MPI      SWREAL = MPI_REAL
+!MPI      SWDBLE = MPI_DOUBLE_PRECISION
 !MPI      SWMAX  = MPI_MAX
 !MPI      SWMIN  = MPI_MIN
 !MPI      SWSUM  = MPI_SUM
@@ -226,7 +233,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -347,7 +354,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -474,7 +481,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -588,6 +595,139 @@
       END
 !****************************************************************
 !
+      SUBROUTINE SWSENDNBD ( ARR, ILEN, IDEST, ITAG )
+!
+!****************************************************************
+!
+!MPI      USE MPI
+      USE OCPCOMM4
+      USE M_PARALL
+!
+      IMPLICIT NONE
+!
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering and Geosciences              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmer: Marcel Zijlema                                |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!  0. Authors
+!
+!     40.96: Marcel Zijlema
+!
+!  1. Updates
+!
+!     40.96, Dec. 17: New subroutine
+!
+!  2. Purpose
+!
+!     Data of double precision is sent to a neighbour
+!
+!  3. Method
+!
+!     Wrapper for MPI_SEND
+!
+!  4. Argument variables
+!
+!     ARR         double precision array
+!     IDEST       rank of the destination process
+!     ILEN        length of array to be sent
+!     ITAG        message type
+!
+      INTEGER ILEN, IDEST, ITAG
+      REAL*8  ARR(ILEN)
+!
+!  5. Parameter variables
+!
+!     ---
+!
+!  6. Local variables
+!
+!     CHARS :     array to pass character info to MSGERR
+!     IENT  :     number of entries
+!     IERR  :     error value of MPI call
+!     IF1   :     first non-character in string1
+!     IF2   :     first non-character in string2
+!     IL1   :     last non-character in string1
+!     IL2   :     last non-character in string2
+!     MSGSTR:     string to pass message to call MSGERR
+!
+      INTEGER      IENT, IERR, IF1, IF2, IL1, IL2
+      CHARACTER*20 INTSTR, CHARS(2)
+      CHARACTER*80 MSGSTR
+!
+!  8. Subroutines used
+!
+!     INTSTR           Converts integer to string
+!MPI!     MPI_SEND         Immediately sends the data in the active
+!MPI!                      MPI message buffer
+!     MSGERR           Writes error message
+!     STRACE           Tracing routine for debugging
+!     TXPBLA           Removes leading and trailing blanks in string
+!
+!  9. Subroutines calling
+!
+!     SWEXCHGD
+!
+! 10. Error messages
+!
+!     ---
+!
+! 12. Structure
+!
+!MPI!     Data is sent to a neighbour with command MPI_SEND
+!
+! 13. Source text
+!
+      SAVE IENT
+      DATA IENT/0/
+      IF (LTRACE) CALL STRACE (IENT,'SWSENDNBD')
+
+!     --- if not parallel, return
+      IF (.NOT.PARLL) RETURN
+
+!MPI      CALL MPI_SEND ( ARR, ILEN, SWDBLE, IDEST-1,
+!MPI     &                ITAG, MPI_COMM_WORLD, IERR )
+!MPI      IF ( IERR.NE.MPI_SUCCESS ) THEN
+!MPI         CHARS(1) = INTSTR(IERR)
+!MPI         CALL TXPBLA(CHARS(1),IF1,IL1)
+!MPI         CHARS(2) = INTSTR(INODE)
+!MPI         CALL TXPBLA(CHARS(2),IF2,IL2)
+!MPI         MSGSTR = 'MPI produces some internal error - '//
+!MPI     &            'return code is '//CHARS(1)(IF1:IL1)//
+!MPI     &            ' and node number is '//CHARS(2)(IF2:IL2)
+!MPI         CALL MSGERR ( 4, MSGSTR )
+!MPI         RETURN
+!MPI      END IF
+
+      RETURN
+      END
+!****************************************************************
+!
       SUBROUTINE SWRECVNB ( IPTR, ILEN, ITYPE, ISOURCE, ITAG )
 !
 !****************************************************************
@@ -610,7 +750,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -730,6 +870,145 @@
       END
 !****************************************************************
 !
+      SUBROUTINE SWRECVNBD ( ARR, ILEN, ISOURCE, ITAG )
+!
+!****************************************************************
+!
+!MPI      USE MPI
+      USE OCPCOMM4
+      USE M_PARALL
+!
+      IMPLICIT NONE
+!
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering and Geosciences              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmer: Marcel Zijlema                                |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!  0. Authors
+!
+!     40.96: Marcel Zijlema
+!
+!  1. Updates
+!
+!     40.96, Dec. 17: New subroutine
+!
+!  2. Purpose
+!
+!     Data of double precision is received from a neighbour
+!
+!  3. Method
+!
+!     Wrapper for MPI_RECV
+!
+!  4. Argument variables
+!
+!     ARR         double precision array
+!     ILEN        length of array to be received
+!     ISOURCE     rank of the source process
+!     ITAG        message type
+!
+      INTEGER ILEN, ISOURCE, ITAG
+      REAL*8  ARR(ILEN)
+!
+!  5. Parameter variables
+!
+!     ---
+!
+!  6. Local variables
+!
+!     CHARS :     array to pass character info to MSGERR
+!     IENT  :     number of entries
+!     IERR  :     error value of MPI call
+!     IF1   :     first non-character in string1
+!     IF2   :     first non-character in string2
+!     IL1   :     last non-character in string1
+!     IL2   :     last non-character in string2
+!MPI!     ISTAT :     MPI status array
+!     MSGSTR:     string to pass message to call MSGERR
+!
+      INTEGER      IENT, IERR, IF1, IF2, IL1, IL2
+!MPI      INTEGER      ISTAT(MPI_STATUS_SIZE)
+      CHARACTER*20 INTSTR, CHARS(2)
+      CHARACTER*80 MSGSTR
+!
+!  8. Subroutines used
+!
+!     INTSTR           Converts integer to string
+!MPI!     MPI_RECV         Immediately receives the data in the active
+!MPI!                      MPI message buffer
+!     MSGERR           Writes error message
+!     STRACE           Tracing routine for debugging
+!     TXPBLA           Removes leading and trailing blanks in string
+!
+!  9. Subroutines calling
+!
+!     SWEXCHGD
+!
+! 10. Error messages
+!
+!     ---
+!
+! 11. Remarks
+!
+!     ---
+!
+! 12. Structure
+!
+!MPI!     Data is received from a neighbour with command MPI_RECV
+!
+! 13. Source text
+!
+      SAVE IENT
+      DATA IENT/0/
+      IF (LTRACE) CALL STRACE (IENT,'SWRECVNBD')
+
+!     --- if not parallel, return
+      IF (.NOT.PARLL) RETURN
+
+!MPI      CALL MPI_RECV ( ARR, ILEN, SWDBLE, ISOURCE-1, ITAG,
+!MPI     &                MPI_COMM_WORLD, ISTAT, IERR )
+!MPI      IF ( IERR.NE.MPI_SUCCESS ) THEN
+!MPI         CHARS(1) = INTSTR(IERR)
+!MPI         CALL TXPBLA(CHARS(1),IF1,IL1)
+!MPI         CHARS(2) = INTSTR(INODE)
+!MPI         CALL TXPBLA(CHARS(2),IF2,IL2)
+!MPI         MSGSTR = 'MPI produces some internal error - '//
+!MPI     &            'return code is '//CHARS(1)(IF1:IL1)//
+!MPI     &            ' and node number is '//CHARS(2)(IF2:IL2)
+!MPI         CALL MSGERR ( 4, MSGSTR )
+!MPI         RETURN
+!MPI      END IF
+
+      RETURN
+      END
+!****************************************************************
+!
       SUBROUTINE SWBROADC ( IPTR, ILEN, ITYPE )
 !
 !****************************************************************
@@ -752,7 +1031,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -864,6 +1143,137 @@
       END
 !****************************************************************
 !
+      SUBROUTINE SWBROADCD ( ARR, ILEN )
+!
+!****************************************************************
+!
+!MPI      USE MPI
+      USE OCPCOMM4
+      USE M_PARALL
+!
+      IMPLICIT NONE
+!
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering and Geosciences              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmer: Marcel Zijlema                                |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!  0. Authors
+!
+!     40.96: Marcel Zijlema
+!
+!  1. Updates
+!
+!     40.96, Dec. 17: New subroutine
+!
+!  2. Purpose
+!
+!     Broadcasts data of double precision from the master to all other processes
+!
+!  3. Method
+!
+!     Wrapper for MPI_BCAST
+!
+!  4. Argument variables
+!
+!     ARR         double precision array
+!     ILEN        length of array to be sent
+!
+      INTEGER ILEN
+      REAL*8  ARR(ILEN)
+!
+!  5. Parameter variables
+!
+!     ---
+!
+!  6. Local variables
+!
+!     CHARS :     character for passing info to MSGERR
+!     IENT  :     number of entries
+!     IERR  :     error value of MPI call
+!     IF    :     first non-character in string
+!     IL    :     last non-character in string
+!     MSGSTR:     string to pass message to call MSGERR
+!
+      INTEGER      IENT, IERR, IF, IL
+      CHARACTER*20 INTSTR, CHARS
+      CHARACTER*80 MSGSTR
+!
+!  8. Subroutines used
+!
+!     INTSTR           Converts integer to string
+!MPI!     MPI_BCAST        Broadcasts a message from the master
+!MPI!                      to all other processes of the group
+!     MSGERR           Writes error message
+!     STRACE           Tracing routine for debugging
+!TIMG!     SWTSTA           Start timing for a section of code
+!TIMG!     SWTSTO           Stop timing for a section of code
+!     TXPBLA           Removes leading and trailing blanks in string
+!
+!  9. Subroutines calling
+!
+!     DAC2
+!
+! 10. Error messages
+!
+!     ---
+!
+! 12. Structure
+!
+!MPI!     Broadcasts double precisions from the master to all other nodes
+!MPI!     with command MPI_BCAST
+!
+! 13. Source text
+!
+      SAVE IENT
+      DATA IENT/0/
+      IF (LTRACE) CALL STRACE (IENT,'SWBROADCD')
+
+!     --- if not parallel, return
+      IF (.NOT.PARLL) RETURN
+
+!TIMG      CALL SWTSTA(201)
+!MPI      CALL MPI_BCAST ( ARR, ILEN, SWDBLE, MASTER-1,
+!MPI     &                 MPI_COMM_WORLD, IERR )
+!MPI      IF ( IERR.NE.MPI_SUCCESS ) THEN
+!MPI         CHARS = INTSTR(IERR)
+!MPI         CALL TXPBLA(CHARS,IF,IL)
+!MPI         MSGSTR = 'MPI produces some internal error - '//
+!MPI     &            'return code is '//CHARS(IF:IL)
+!MPI         CALL MSGERR ( 4, MSGSTR )
+!MPI         RETURN
+!MPI      END IF
+!TIMG      CALL SWTSTO(201)
+
+      RETURN
+      END
+!****************************************************************
+!
       SUBROUTINE SWGATHER ( IOPTR, IOLEN, IIPTR, IILEN, ITYPE )
 !
 !****************************************************************
@@ -886,7 +1296,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1056,6 +1466,198 @@
       END
 !****************************************************************
 !
+      SUBROUTINE SWGATHERD ( ARRO, IOLEN, ARRI, IILEN )
+!
+!****************************************************************
+!
+!MPI      USE MPI
+      USE OCPCOMM4
+      USE M_PARALL
+!
+      IMPLICIT NONE
+!
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering and Geosciences              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmer: Marcel Zijlema                                |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!  0. Authors
+!
+!     40.96: Marcel Zijlema
+!
+!  1. Updates
+!
+!     40.96, Dec. 17: New subroutine
+!
+!  2. Purpose
+!
+!     Gathers different amounts of data of double precision from each processor
+!     to the master
+!
+!  3. Method
+!
+!     Wrapper for MPI_GATHERV
+!
+!  4. Argument variables
+!
+!     ARRI        double precision input array (local)
+!     ARRO        double precision output array (global)
+!     IILEN       length of input array
+!     IOLEN       length of output array
+!
+      INTEGER IILEN, IOLEN
+      REAL*8  ARRI(IILEN), ARRO(IOLEN)
+!
+!  5. Parameter variables
+!
+!     ---
+!
+!  6. Local variables
+!
+!     CHARS :     character for passing info to MSGERR
+!     I     :     loop counter
+!     ICOUNT:     array specifying array size of data received
+!                 from each processor
+!     IDSPLC:     array specifying the starting address of the
+!                 incoming data from each processor, relative
+!                 to the global array
+!     IENT  :     number of entries
+!     IERR  :     error value of MPI call
+!     IF    :     first non-character in string
+!     IL    :     last non-character in string
+!     MSGSTR:     string to pass message to call MSGERR
+!
+      INTEGER                 I, IENT, IERR, IF, IL
+      INTEGER, ALLOCATABLE :: ICOUNT(:), IDSPLC(:)
+      CHARACTER*20            INTSTR, CHARS
+      CHARACTER*80            MSGSTR
+!
+!  8. Subroutines used
+!
+!     INTSTR           Converts integer to string
+!MPI!     MPI_GATHER       Gathers data from all nodes to the master
+!MPI!     MPI_GATHERV      Gathers different amounts of data from
+!MPI!                      all nodes to the master
+!     MSGERR           Writes error message
+!     STRACE           Tracing routine for debugging
+!     TXPBLA           Removes leading and trailing blanks in string
+!
+!  9. Subroutines calling
+!
+!     DAC2
+!
+! 10. Error messages
+!
+!     ---
+!
+! 12. Structure
+!
+!     if not parallel, return
+!
+!MPI!     gather the array sizes to the master
+!MPI!
+!     check whether enough space has been allocated
+!     for gathered data
+!
+!     calculate starting address of each local array
+!     with respect to the global array
+!
+!MPI!     gather different amounts of data from each processor
+!MPI!     to the master
+!MPI!
+! 13. Source text
+!
+      SAVE IENT
+      DATA IENT/0/
+      IF (LTRACE) CALL STRACE (IENT,'SWGATHERD')
+
+!     --- if not parallel, return
+      IF (.NOT.PARLL) RETURN
+
+      IF (INODE.EQ.MASTER) THEN
+         ALLOCATE(ICOUNT(0:NPROC-1))
+         ALLOCATE(IDSPLC(0:NPROC-1))
+      END IF
+
+!MPI!     --- gather the array sizes to the master
+!MPI
+!MPI      CALL MPI_GATHER( IILEN, 1, SWINT, ICOUNT, 1, SWINT,
+!MPI     &                 MASTER-1, MPI_COMM_WORLD, IERR )
+!MPI      IF ( IERR.NE.MPI_SUCCESS ) THEN
+!MPI         CHARS = INTSTR(IERR)
+!MPI         CALL TXPBLA(CHARS,IF,IL)
+!MPI         MSGSTR = 'MPI produces some internal error - '//
+!MPI     &            'return code is '//CHARS(IF:IL)
+!MPI         CALL MSGERR ( 4, MSGSTR )
+!MPI         RETURN
+!MPI      END IF
+
+!     --- check whether enough space has been allocated
+!         for gathered data
+
+      IF (INODE.EQ.MASTER) THEN
+         IF ( SUM(ICOUNT).GT.IOLEN ) THEN
+            CALL MSGERR(4,
+     &                  'Not enough space allocated for gathered data')
+            RETURN
+         END IF
+      END IF
+
+!     --- calculate starting address of each local array
+!         with respect to the global array
+
+      IF (INODE.EQ.MASTER) THEN
+         IDSPLC(0) = 0
+         DO I = 1, NPROC-1
+            IDSPLC(I) = ICOUNT(I-1) + IDSPLC(I-1)
+         END DO
+      END IF
+
+!MPI!     --- gather different amounts of data from each processor
+!MPI!         to the master
+!MPI
+!MPI      CALL MPI_GATHERV( ARRI, IILEN, SWDBLE, ARRO, ICOUNT, IDSPLC,
+!MPI     &                  SWDBLE, MASTER-1, MPI_COMM_WORLD, IERR )
+!MPI      IF ( IERR.NE.MPI_SUCCESS ) THEN
+!MPI         CHARS = INTSTR(IERR)
+!MPI         CALL TXPBLA(CHARS,IF,IL)
+!MPI         MSGSTR = 'MPI produces some internal error - '//
+!MPI     &            'return code is '//CHARS(IF:IL)
+!MPI         CALL MSGERR ( 4, MSGSTR )
+!MPI         RETURN
+!MPI      END IF
+
+      IF (INODE.EQ.MASTER) DEALLOCATE(ICOUNT,IDSPLC)
+
+      RETURN
+      END
+!****************************************************************
+!
       SUBROUTINE SWREDUCE ( IPTR, ILEN, ITYPE, ITYPRD )
 !
 !****************************************************************
@@ -1077,7 +1679,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1194,7 +1796,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1332,7 +1934,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1448,6 +2050,144 @@
       END
 !****************************************************************
 !
+      SUBROUTINE SWREDUCD ( ARR, ILEN, ITYPRD )
+!
+!****************************************************************
+!
+!MPI      USE MPI
+      USE OCPCOMM4
+      USE M_PARALL
+!
+      IMPLICIT NONE
+!
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering and Geosciences              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmer: Marcel Zijlema                                |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!  0. Authors
+!
+!     40.96: Marcel Zijlema
+!
+!  1. Updates
+!
+!     40.96, Dec. 08: New subroutine
+!
+!  2. Purpose
+!
+!     Performs a global reduction of type ITYPRD on double precision
+!     array ARR to collect values from all processes
+!
+!  3. Method
+!
+!     Wrapper for MPI_ALLREDUCE
+!
+!  4. Argument variables
+!
+!     ARR         double precision array
+!     ILEN        length of array to be collect
+!     ITYPRD      type of reduction
+!
+      INTEGER ILEN, ITYPRD
+      REAL*8  ARR(ILEN)
+!
+!  6. Local variables
+!
+!     CHARS :     character for passing info to MSGERR
+!     IENT  :     number of entries
+!     IERR  :     error value of MPI call
+!     IF    :     first non-character in string
+!     IL    :     last non-character in string
+!     MSGSTR:     string to pass message to call MSGERR
+!     TEMP  :     temporary array to store collected data
+!
+      INTEGER      IENT, IERR, IF, IL
+      CHARACTER*20 INTSTR, CHARS
+      CHARACTER*80 MSGSTR
+
+      REAL*8, ALLOCATABLE :: TEMP(:)
+!
+!  8. Subroutines used
+!
+!     INTSTR           Converts integer to string
+!MPI!     MPI_ALLREDUCE    Combines values from all processes and
+!MPI!                      distribute the result back to all processes
+!     MSGERR           Writes error message
+!     STRACE           Tracing routine for debugging
+!TIMG!     SWTSTA           Start timing for a section of code
+!TIMG!     SWTSTO           Stop timing for a section of code
+!     TXPBLA           Removes leading and trailing blanks in string
+!
+!  9. Subroutines calling
+!
+!     SWREDUCE
+!
+! 10. Error messages
+!
+!     ---
+!
+! 11. Remarks
+!
+!     ---
+!
+! 12. Structure
+!
+!MPI!     Performs a global reduction of double precisions across all nodes
+!MPI!     with command MPI_ALLREDUCE
+!
+! 13. Source text
+!
+      SAVE IENT
+      DATA IENT/0/
+      IF (LTRACE) CALL STRACE (IENT,'SWREDUCD')
+
+      ALLOCATE(TEMP(ILEN))
+
+!TIMG      CALL SWTSTA(202)
+!MPI      CALL MPI_ALLREDUCE ( ARR, TEMP, ILEN, SWDBLE,
+!MPI     &                     ITYPRD, MPI_COMM_WORLD, IERR )
+!MPI      IF ( IERR.NE.MPI_SUCCESS ) THEN
+!MPI         CHARS = INTSTR(IERR)
+!MPI         CALL TXPBLA(CHARS,IF,IL)
+!MPI         MSGSTR = 'MPI produces some internal error - '//
+!MPI     &            'return code is '//CHARS(IF:IL)
+!MPI         CALL MSGERR ( 4, MSGSTR )
+!MPI         RETURN
+!MPI      END IF
+      ARR = TEMP
+!TIMG      CALL SWTSTO(202)
+
+      DEALLOCATE(TEMP)
+
+      RETURN
+      END
+!****************************************************************
+!
       SUBROUTINE SWSTRIP ( IPOWN, IDIR, IPART, NPART, LPARTS,
      &                     MXC  , MYC )
 !
@@ -1469,7 +2209,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1707,7 +2447,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1976,7 +2716,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -2207,7 +2947,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -2737,7 +3477,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -2875,6 +3615,8 @@
       IWRKEX = 0
       ALLOCATE(WRKEXG(MAX(IHALOX,IHALOY)*MAX(MXC,MYC)))
       WRKEXG = 0.
+      ALLOCATE(DWRKEX(MAX(IHALOX,IHALOY)*MAX(MXC,MYC)))
+      DWRKEX = 0D0
 
       DEALLOCATE(IPOWN)
 
@@ -2904,7 +3646,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -3188,7 +3930,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -3444,6 +4186,284 @@
       END
 !****************************************************************
 !
+      SUBROUTINE SWEXCHGD ( FIELD, KGRPNT, KS, KE )
+!
+!****************************************************************
+!
+      USE OCPCOMM4
+      USE SwashCommdata3
+      USE M_PARALL
+!
+      IMPLICIT NONE
+!
+!
+!   --|-----------------------------------------------------------|--
+!     | Delft University of Technology                            |
+!     | Faculty of Civil Engineering and Geosciences              |
+!     | Environmental Fluid Mechanics Section                     |
+!     | P.O. Box 5048, 2600 GA  Delft, The Netherlands            |
+!     |                                                           |
+!     | Programmer: Marcel Zijlema                                |
+!   --|-----------------------------------------------------------|--
+!
+!
+!     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
+!     Copyright (C) 2010-2018  Delft University of Technology
+!
+!     This program is free software; you can redistribute it and/or
+!     modify it under the terms of the GNU General Public License as
+!     published by the Free Software Foundation; either version 2 of
+!     the License, or (at your option) any later version.
+!
+!     This program is distributed in the hope that it will be useful,
+!     but WITHOUT ANY WARRANTY; without even the implied warranty of
+!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+!     GNU General Public License for more details.
+!
+!     A copy of the GNU General Public License is available at
+!     http://www.gnu.org/copyleft/gpl.html#SEC3
+!     or by writing to the Free Software Foundation, Inc.,
+!     59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+!
+!
+!  0. Authors
+!
+!      1.00: Marcel Zijlema
+!
+!  1. Updates
+!
+!      1.00, Aug. 14: New subroutine
+!
+!  2. Purpose
+!
+!     Updates field array of type double precision through exchanging
+!     values between neighbouring subdomains
+!
+!  3. Method
+!
+!     Made use of MPI by means of SWSENDNBD and SWRECVNBD
+!     and also block administration (stored in IBLKAD)
+!
+!  4. Argument variables
+!
+!     FIELD       field array for which 'halo' values must
+!                 be copied from neighbouring subdomains
+!     KGRPNT      indirect addressing for grid points
+!     KE          last index in vertical direction
+!     KS          first index in vertical direction
+!
+      INTEGER KS, KE
+      INTEGER KGRPNT(MXC*MYC)
+      REAL*8  FIELD(MCGRD,KS:KE)
+!
+!  6. Local variables
+!
+!     IDOM  :     subdomain number
+!     IENT  :     number of entries
+!     INB   :     neighbour counter
+!     ISTART:     pointer in array IBLKAD
+!     ITAG  :     message tag for sending and receiving
+!     J     :     loop counter
+!     JE    :     last index of J
+!     JS    :     first index of J
+!     K     :     loop counter in vertical direction
+!     N     :     loop counter
+!     NNEIGH:     number of neighbouring subdomains
+!     NOVLU :     number of overlapping unknowns
+!     NOVLUP:     number of overlapping unknowns
+!                 in part of halo area
+!
+      INTEGER IDOM, IENT, INB, ISTART, ITAG, J, JE, JS, K,
+     &        N, NNEIGH, NOVLU, NOVLUP
+!
+!  8. Subroutines used
+!
+!     STPNOW           Logical indicating whether program must
+!                      terminated or not
+!     STRACE           Tracing routine for debugging
+!     SWRECVNBD        Data is received from a neighbour (double precision)
+!     SWSENDNBD        Data is sent to a neighbour (double precision)
+!TIMG!     SWTSTA           Start timing for a section of code
+!TIMG!     SWTSTO           Stop timing for a section of code
+!
+      LOGICAL STPNOW
+!
+!  9. Subroutines calling
+!
+!     ---
+!
+! 10. Error messages
+!
+!     ---
+!
+! 11. Remarks
+!
+!     ---
+!
+! 12. Structure
+!
+!     if not parallel, return
+!
+!     consider either whole halo area or parts of it, do
+!
+!        for all layers do
+!
+!           for all neighbouring subdomains do
+!              get subdomain number, pointer and size
+!              store data to be sent in array DWRKEX
+!              send array DWRKEX
+!
+!           for all neighbouring subdomains do
+!              get subdomain number, pointer and size
+!              receive next array and store in DWRKEX
+!              store the received data
+!
+! 13. Source text
+!
+      SAVE IENT
+      DATA IENT/0/
+      IF (LTRACE) CALL STRACE (IENT,'SWEXCHGD')
+
+!     --- if not parallel, return
+      IF (.NOT.PARLL) RETURN
+
+!TIMG      CALL SWTSTA(203)
+
+      NNEIGH = IBLKAD(1)
+
+      IF ( NHALOP.EQ.1 ) THEN
+!        take halo area at once for exchanging data
+
+!        --- for all layers do
+
+         DO K = KS, KE
+
+!           --- for all neighbouring subdomains do
+
+            DO INB = 1, NNEIGH
+
+!              --- get subdomain number, pointer and size
+
+               IDOM   = IBLKAD(3*INB-1)
+               ISTART = IBLKAD(3*INB+1)
+               NOVLU  = IBLKAD(ISTART)
+
+!              --- store data to be sent in array DWRKEX
+
+               DO J = 1, NOVLU
+                  DWRKEX(J) = FIELD(KGRPNT(IBLKAD(ISTART+J)),K)
+               END DO
+
+!              --- send array DWRKEX
+
+               ITAG = 2
+               CALL SWSENDNBD ( DWRKEX, NOVLU, IDOM, ITAG )
+               IF (STPNOW()) RETURN
+
+            END DO
+
+!           --- for all neighbouring subdomains do
+
+            DO INB = 1, NNEIGH
+
+!              --- get subdomain number, pointer and size
+
+               IDOM   = IBLKAD(3*INB-1)
+               ISTART = IBLKAD(3*INB+1)
+               NOVLU  = IBLKAD(ISTART)
+
+!              --- receive next array and store in DWRKEX
+
+               ITAG = 2
+               CALL SWRECVNBD ( DWRKEX, NOVLU, IDOM, ITAG )
+               IF (STPNOW()) RETURN
+
+!              --- store the received data
+
+               DO J = 1, NOVLU
+                  FIELD(KGRPNT(IBLKAD(ISTART+NOVLU+J)),K) = DWRKEX(J)
+               END DO
+
+            END DO
+
+         END DO
+
+      ELSE
+!        consider each part of halo area for exchanging data
+
+!        --- for all layers do
+
+         DO K = KS, KE
+
+!           --- for all parts of halo area
+
+            DO N = 1, NHALOP
+
+               JS = JHALOS(N)
+               JE = JHALOE(N)
+
+               NOVLUP = JE - JS + 1
+
+!              --- for all neighbouring subdomains do
+
+               DO INB = 1, NNEIGH
+
+!                 --- get subdomain number, pointer and size
+
+                  IDOM   = IBLKAD(3*INB-1)
+                  ISTART = IBLKAD(3*INB+1)
+
+!                 --- store data to be sent in array DWRKEX
+
+                  DO J = JS, JE
+                     DWRKEX(J-JS+1) = FIELD(KGRPNT(IBLKAD(ISTART+J)),K)
+                  END DO
+
+!                 --- send array DWRKEX
+
+                  ITAG = 2
+                  CALL SWSENDNBD ( DWRKEX, NOVLUP, IDOM, ITAG )
+                  IF (STPNOW()) RETURN
+
+               END DO
+
+!              --- for all neighbouring subdomains do
+
+               DO INB = 1, NNEIGH
+
+!                 --- get subdomain number, pointer and size
+
+                  IDOM   = IBLKAD(3*INB-1)
+                  ISTART = IBLKAD(3*INB+1)
+                  NOVLU  = IBLKAD(ISTART)
+
+!                 --- receive next array and store in DWRKEX
+
+                  ITAG = 2
+                  CALL SWRECVNBD ( DWRKEX, NOVLUP, IDOM, ITAG )
+                  IF (STPNOW()) RETURN
+
+!                 --- store the received data
+
+                  DO J = JS, JE
+                     FIELD(KGRPNT(IBLKAD(ISTART+NOVLU+J)),K) =
+     &                                                    DWRKEX(J-JS+1)
+                  END DO
+
+               END DO
+
+            END DO
+
+         END DO
+
+      END IF
+
+!TIMG      CALL SWTSTO(203)
+
+      RETURN
+      END
+!****************************************************************
+!
       SUBROUTINE SWRECVFLD ( FIELD, NFLD, IS, J, SWPDIR, KGRPNT )
 !
 !****************************************************************
@@ -3466,7 +4486,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -3661,7 +4681,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -3857,7 +4877,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -4070,7 +5090,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -4412,7 +5432,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -4681,7 +5701,7 @@
                     IUNIT = HIOPEN+NREOQ+(NREF-HIOPEN-1)*NPROC+IPROC
                     DO JVAR = 1, NVAR
                        IVTYPE = IVTYP(JVAR)
-                       IF ( IVTYPE.LE.50 ) THEN
+                       IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
                           READ (IUNIT,'(A)') OUTLIN
                           CALL TXPBLA(OUTLIN,IF,IL)
                           WRITE (NREF, '(A)') OUTLIN(1:IL)
@@ -4781,7 +5801,7 @@
                  WRITE (OUTLIN(IL:IL+LFIELD-1), FMT=FSTR) OVEXCV(IVTYPE)  40.51
               END IF                                                      40.51
             ELSE
-              IF ( IVTYPE.LE.50 ) THEN
+              IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
                  WRITE(NREF,FMT=FLT_SWASH) OVEXCV(IVTYPE)
                  IF (OVSVTY(IVTYPE).EQ.3) THEN
                     WRITE(NREF,FMT=FLT_SWASH) OVEXCV(IVTYPE)
@@ -4841,7 +5861,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as

@@ -11,7 +11,7 @@ subroutine SwashBCshortwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -89,6 +89,7 @@ subroutine SwashBCshortwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
     real           :: rval             ! auxiliary real
     real           :: s                ! sign
     real           :: theta            ! wave direction of a Fourier component
+    real           :: urmax            ! maximum Ursell number
     !
     logical, save  :: nowarn = .false. ! give no warning again
     !
@@ -138,6 +139,7 @@ subroutine SwashBCshortwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
        !
     endif
     !
+    urmax  = -999.
     icemds = 0
     !
     do j = 1, nfreq
@@ -169,6 +171,15 @@ subroutine SwashBCshortwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
        ! correct amplitude in case of TMA spectrum for shallow water
        !
        if ( shape == 3 ) ampl = ampl * omega * omega / ( grav * kwav * sqrt(2.*n) )
+       !
+       ! compute the maximum Ursell number
+       !
+       if ( ampl /= 0. .and. kwav /= 0. ) then
+          !
+          rval = ampl / swd / swd / swd / swd / kwav / kwav / kwav
+          if ( rval > urmax ) urmax = rval
+          !
+       endif
        !
        ! in case of periodicity, wave direction must be corrected so that wave number is an integer multiple of 2pi/length with length the periodicity length
        !
@@ -223,6 +234,14 @@ subroutine SwashBCshortwave ( bcfour, nfreq, xp, yp, ibgrpt, swd, wdir, rsgn, vd
        bcfour%comp2(ibgrpt,j) = ampl * sin( phase )
        !
     enddo
+    !
+    ! give warning if maximum Ursell number > 0.2
+    !
+    if ( urmax > 0.2 ) then
+       write (msgstr,'(a,f5.2,a)') 'the Ursell number associated with the wavemaker-generated wave field = ',urmax, ' > 0.2'
+       call msgerr (1, trim(msgstr) )
+       write (PRINTF,'(a)') '                       (linear wave theory and possible second order bound long waves not valid)'
+    endif
     !
     ! give warning for filtering out the evanescent modes
     !

@@ -11,7 +11,7 @@ subroutine SwashVeget
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -32,10 +32,12 @@ subroutine SwashVeget
 !   Authors
 !
 !    1.00: Tomohiro Suzuki
+!    5.01: Kenji Kumada, Tomohiro Suzuki
 !
 !   Updates
 !
-!    1.00, Aptil 2012: New subroutine
+!    1.00, April 2012: New subroutine
+!    5.01, March 2018: inclusion porosity effect
 !
 !   Purpose
 !
@@ -44,17 +46,34 @@ subroutine SwashVeget
 !   Method
 !
 !   The wave damping induced by aquatic vegetation is described by
-!   the Morrison type equation, modelling the plants as vertical,
+!   the Morison type equation, modelling the plants as vertical,
 !   noncompliant cylinders, neclecting swaying motions induced by
 !   waves
 !
 !   The drag force consists of viscous effect and form drag around
-!   the cylinders which is modelled as one process, while the
-!   inertia force due to acceleration is optionally included
+!   the cylinders which is modelled as one process and is proportional
+!   to the square of the characteristic velocity V, which is the
+!   ambient flow. The inertia force due to local acceleration (the
+!   time derivative of V) is optionally included
+!
+!   For the case of densely spaced cylinders (e.g. dense mangrove
+!   fields, porous brushwood groins), the effect of (relatively
+!   low) porosity should be included. In this case the characteristic
+!   velocity is the pore velocity defined as V/n, with n the
+!   porosity, i.e. the ratio between the fluid volume and the total
+!   volume. The volume of the cylinders equals 1 - n, i.e. the
+!   vegetation volume in the unit volume
 !
 !   Vegetation characteristics that are used as input are the
-!   drag coefficient, vegetation height, plant density and
-!   stem diameter
+!   drag coefficient, vegetation height, plant density and stem
+!   diameter. Based on these quantities the spatial occupation
+!   of vegetation per unit volume is calculated in the velocity
+!   points and temporarily stored in work arrays
+!
+!   The total force due to vegetation including inertia and porosity
+!   effects consists of the drag force, the inertia force related to
+!   the vegetation volume, and the inertia force related to the clear
+!   fluid, and is given by Eq. (61) of Burcharth and Andersen (1995)
 !
 !   Modules used
 !
@@ -82,13 +101,16 @@ subroutine SwashVeget
     integer       :: nmu      ! pointer to m+1,n
     integer       :: nu       ! index of point n+1
     integer       :: num      ! pointer to m,n+1
-!
-    real          :: tdragf   ! total contribution to drag force over vegetation layers
+    !
+    real          :: fac      ! auxiliary factor
+    real          :: fsum     ! auxiliary sum
     real          :: hvtot    ! total vegetation height
+    real          :: np       ! porosity of vegetation field
+    real          :: tdragf   ! total contribution to drag force over vegetation layers
     real          :: tinerf   ! total contribution to inertia force over vegetation layers
     real          :: zv       ! vegetation layer interface
     real          :: zvh      ! vegetation height level
-!
+    !
     logical       :: STPNOW   ! indicates that program must stop
 !
 !   Structure
@@ -98,6 +120,11 @@ subroutine SwashVeget
 !   Source text
 !
     if (ltrace) call strace (ient,'SwashVeget')
+    !
+    ! initialize arrays to store spatial occupation of vegetation per unit volume in velocity points
+    !
+    work(:,1) = 0.     ! u-point
+    work(:,2) = 0.     ! v-point
     !
     ! compute vegetation coefficient integrated over layers
     !
@@ -157,8 +184,10 @@ subroutine SwashVeget
                    !
                 endif
                 !
+                work(nm,1) = 0.25 * pi * tinerf / hum(nm)
+                !
                 cvegu(nm,1,1) = 0.5 * tdragf / hum(nm)
-                cvegu(nm,1,2) = 0.25*pi * cvm * tinerf / hum(nm)
+                cvegu(nm,1,2) = cvm * work(nm,1)
                 !
              endif
              !
@@ -219,8 +248,10 @@ subroutine SwashVeget
                       !
                    endif
                    !
+                   work(nm,1) = 0.25 * pi * tinerf / hum(nm)
+                   !
                    cvegu(nm,1,1) = 0.5 * tdragf / hum(nm)
-                   cvegu(nm,1,2) = 0.25*pi * cvm * tinerf / hum(nm)
+                   cvegu(nm,1,2) = cvm * work(nm,1)
                    !
                 endif
                 !
@@ -280,8 +311,10 @@ subroutine SwashVeget
                       !
                    endif
                    !
+                   work(nm,2) = 0.25 * pi * tinerf / hvm(nm)
+                   !
                    cvegv(nm,1,1) = 0.5 * tdragf / hvm(nm)
-                   cvegv(nm,1,2) = 0.25*pi * cvm * tinerf / hvm(nm)
+                   cvegv(nm,1,2) = cvm * work(nm,2)
                    !
                 endif
                 !
@@ -299,6 +332,8 @@ subroutine SwashVeget
              nm = kgrpnt(m,1)
              !
              if ( wetu(nm) == 1 ) then
+                !
+                fsum = 0.
                 !
                 ! compute vegetation coefficient for each computational layer
                 !
@@ -354,7 +389,11 @@ subroutine SwashVeget
                    cvegu(nm,k,1) = 0.5 * tdragf / hkum(nm,k)
                    cvegu(nm,k,2) = 0.25*pi * cvm * tinerf / hkum(nm,k)
                    !
+                   fsum = fsum + tinerf
+                   !
                 enddo
+                !
+                work(nm,1) = 0.25 * pi * fsum / hum(nm)
                 !
              endif
              !
@@ -373,6 +412,8 @@ subroutine SwashVeget
                 nmu = kgrpnt(mu,n)
                 !
                 if ( wetu(nm) == 1 .and. nmu /= 1 ) then
+                   !
+                   fsum = 0.
                    !
                    ! compute vegetation coefficient for each computational layer
                    !
@@ -428,7 +469,11 @@ subroutine SwashVeget
                       cvegu(nm,k,1) = 0.5 * tdragf / hkum(nm,k)
                       cvegu(nm,k,2) = 0.25*pi * cvm * tinerf / hkum(nm,k)
                       !
+                      fsum = fsum + tinerf
+                      !
                    enddo
+                   !
+                   work(nm,1) = 0.25 * pi * fsum / hum(nm)
                    !
                 endif
                 !
@@ -446,6 +491,8 @@ subroutine SwashVeget
                 num = kgrpnt(m,nu)
                 !
                 if ( wetv(nm) == 1 .and. num /= 1 ) then
+                   !
+                   fsum = 0.
                    !
                    ! compute vegetation coefficient for each computational layer
                    !
@@ -501,7 +548,11 @@ subroutine SwashVeget
                       cvegv(nm,k,1) = 0.5 * tdragf / hkvm(nm,k)
                       cvegv(nm,k,2) = 0.25*pi * cvm * tinerf / hkvm(nm,k)
                       !
+                      fsum = fsum + tinerf
+                      !
                    enddo
+                   !
+                   work(nm,2) = 0.25 * pi * fsum / hvm(nm)
                    !
                 endif
                 !
@@ -524,6 +575,8 @@ subroutine SwashVeget
              !
              cvegu(nm,:,:) = cvegu(nm,:,:) * nplaf(nm)
              !
+             work(nm,1) = work(nm,1) * nplaf(nm)
+             !
           enddo
           !
        else
@@ -542,7 +595,11 @@ subroutine SwashVeget
                 !
                 if ( ndm == 1 ) ndm = nm
                 !
-                cvegu(nm,:,:) = 0.5 * cvegu(nm,:,:) * ( nplaf(nm) + nplaf(ndm) )
+                fac = 0.5 * ( nplaf(nm) + nplaf(ndm) )
+                !
+                cvegu(nm,:,:) = cvegu(nm,:,:) * fac
+                !
+                work(nm,1) = work(nm,1) * fac
                 !
              enddo
           enddo
@@ -561,7 +618,114 @@ subroutine SwashVeget
                 !
                 if ( nmd == 1 ) nmd = nm
                 !
-                cvegv(nm,:,:) = 0.5 * cvegv(nm,:,:) * ( nplaf(nm) + nplaf(nmd) )
+                fac = 0.5 * ( nplaf(nm) + nplaf(nmd) )
+                !
+                cvegv(nm,:,:) = cvegv(nm,:,:) * fac
+                !
+                work(nm,2) = work(nm,2) * fac
+                !
+             enddo
+          enddo
+          !
+       endif
+       !
+    endif
+    !
+    ! adapt vegetation coefficients to include porosity effect, if appropriate
+    ! (compare Eq. (61) with Eq. (54) of Burcharth and Andersen, 1995)
+    !
+    if ( iveg == 1 .and. iporos /= 0 ) then
+       !
+       if ( oned ) then
+          !
+          do m = mf, ml
+             !
+             nm = kgrpnt(m,1)
+             !
+             np = nporu(nm)
+             !
+             cvegu(nm,:,1) = cvegu(nm,:,1) / np / np / np
+             cvegu(nm,:,2) = cvegu(nm,:,2) / np / np
+             !
+          enddo
+          !
+       else
+          !
+          ! loop over u-points
+          !
+          do n = nfu, nl
+             do m = mf, ml
+                !
+                nm = kgrpnt(m,n)
+                !
+                np = nporu(nm)
+                !
+                cvegu(nm,:,1) = cvegu(nm,:,1) / np / np / np
+                cvegu(nm,:,2) = cvegu(nm,:,2) / np / np
+                !
+             enddo
+          enddo
+          !
+          ! loop over v-points
+          !
+          do m = mfu, ml
+             do n = nf, nl
+                !
+                nm = kgrpnt(m,n)
+                !
+                np = nporv(nm)
+                !
+                cvegv(nm,:,1) = cvegv(nm,:,1) / np / np / np
+                cvegv(nm,:,2) = cvegv(nm,:,2) / np / np
+                !
+             enddo
+          enddo
+          !
+       endif
+       !
+    else if ( iveg == 2 ) then
+       !
+       if ( oned ) then
+          !
+          do m = mf, ml
+             !
+             nm = kgrpnt(m,1)
+             !
+             np = 1. - work(nm,1)
+             !
+             cvegu(nm,:,1) = cvegu(nm,:,1) / np / np / np
+             cvegu(nm,:,2) = cvegu(nm,:,2) / np / np
+             !
+          enddo
+          !
+       else
+          !
+          ! loop over u-points
+          !
+          do n = nfu, nl
+             do m = mf, ml
+                !
+                nm = kgrpnt(m,n)
+                !
+                np = 1. - work(nm,1)
+                !
+                cvegu(nm,:,1) = cvegu(nm,:,1) / np / np / np
+                cvegu(nm,:,2) = cvegu(nm,:,2) / np / np
+                !
+             enddo
+          enddo
+          !
+          ! loop over v-points
+          !
+          do m = mfu, ml
+             do n = nf, nl
+                !
+                nm = kgrpnt(m,n)
+                !
+                np = 1. - work(nm,2)
+                !
+                cvegv(nm,:,1) = cvegv(nm,:,1) / np / np / np
+                cvegv(nm,:,2) = cvegv(nm,:,2) / np / np
                 !
              enddo
           enddo

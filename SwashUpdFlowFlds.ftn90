@@ -11,7 +11,7 @@ subroutine SwashUpdFlowFlds
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -191,6 +191,7 @@ subroutine SwashUpdFlowFlds
                    !
                    u1(nm,1) = 0.5 * ( uxf(nm,2) + uxf(ndm,2) ) * ( ycgrid(m,n) - ycgrid(m,n-1) ) - 0.5 * ( uyf(nm,2) + uyf(ndm,2) ) * ( xcgrid(m,n) - xcgrid(m,n-1) )
                    u1(nm,1) = u1(nm,1) / guu(nm)
+                   if ( .not.cvleft ) u1(nm,1) = -u1(nm,1)
                    !
                 enddo
                 !
@@ -266,6 +267,7 @@ subroutine SwashUpdFlowFlds
                 !
                 v1(nm,1) = 0.5 * ( uyf(nm,2) + uyf(nmd,2) ) * ( xcgrid(m,n) - xcgrid(m-1,n) ) - 0.5 * ( uxf(nm,2) + uxf(nmd,2) ) * ( ycgrid(m,n) - ycgrid(m-1,n) )
                 v1(nm,1) = v1(nm,1) / gvv(nm)
+                if ( .not.cvleft ) v1(nm,1) = -v1(nm,1)
                 !
              enddo
              !

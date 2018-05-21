@@ -69,6 +69,7 @@ SwashSpongeLayer.$(EXTO) \
 SwanVertlist.$(EXTO) \
 SwashPrintSettings.$(EXTO) \
 SwashFlowDP.$(EXTO) \
+SwashFloatObjects.$(EXTO) \
 SwashUpdateData.$(EXTO) \
 SwashReadBndval.$(EXTO) \
 SwashUpdateFld.$(EXTO) \
@@ -97,6 +98,7 @@ SwashComputFlow.$(EXTO) \
 SwashComputTrans.$(EXTO) \
 SwashComputTurb.$(EXTO) \
 SwashDryWet.$(EXTO) \
+SwashPresFlow.$(EXTO) \
 SwashBreakPoint.$(EXTO) \
 SwashAverOutp.$(EXTO) \
 SwashImpDep1DHflow.$(EXTO) \
@@ -127,6 +129,8 @@ SwashDecOutL.$(EXTO) \
 SwashDecOutQ.$(EXTO) \
 SwashCoorOutp.$(EXTO) \
 SwashQuanOutp.$(EXTO) \
+SwashHydroLoads.$(EXTO) \
+SwashRunupHeight.$(EXTO) \
 SwanInterpolatePoint.$(EXTO) \
 SwanInterpolateOutput.$(EXTO) \
 SwashCleanMem.$(EXTO) \

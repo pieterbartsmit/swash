@@ -11,7 +11,7 @@ subroutine SwashComputStruc
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -91,6 +91,13 @@ subroutine SwashComputStruc
     !
 !TIMG    call SWTSTA(54)
     call SwashDryWet
+!TIMG    call SWTSTO(54)
+    if (STPNOW()) return
+    !
+    ! update mask arrays for free surface / pressurized flow
+    !
+!TIMG    call SWTSTA(54)
+    if ( ifloat /= 0 ) call SwashPresFlow
 !TIMG    call SWTSTO(54)
     if (STPNOW()) return
     !

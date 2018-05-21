@@ -19,7 +19,7 @@ module outp_data
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -71,6 +71,11 @@ module outp_data
     integer                          :: fld_table = 15             ! field length for fixed-point table
     integer, save                    :: nreoq     =  0             ! actual number of requests saved
     !
+    real                             :: alpobj                     ! (counter clockwise) rotation angle of axis of floating body relative to computational grid
+    real                             :: cogx                       ! x-coordinate of center of gravity of floating body relative to computational grid
+    real                             :: cogy                       ! y-coordinate of center of gravity of floating body relative to computational grid
+    real                             :: cogz                       ! z-coordinate of center of gravity of floating body relative to computational grid
+    real                             :: delrp                      ! threshold depth for runup height calculation (for output quantity RUNUP)
     real                             :: hrunp                      ! depth where inundation takes place (for output quantity HRUN)
     real                             :: ncuroutp                   ! number of steps during integration of current for output
     real                             :: ntraoutp                   ! number of steps during integration of concentrations for output
@@ -134,6 +139,7 @@ module outp_data
                                                                    ! =28; time-averaged salinity
                                                                    ! =29; time-averaged temperature
                                                                    ! =30; time-averaged suspended sediment
+                                                                   ! =31; vorticity
     real, dimension(:,:,:), save, allocatable :: oparrk            ! help array to save some layer-dependent quantities for outputting
                                                                    ! = 1; layer thickness
                                                                    ! = 2; layer interface
@@ -218,7 +224,7 @@ module m_bndspec
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -369,7 +375,7 @@ module m_genarr
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -436,6 +442,8 @@ module m_genarr
     real   , dimension(:)  , save, allocatable :: cdveg       ! drag coefficient due to vegetation for each layer
     real   , dimension(:)  , save, allocatable :: depf        ! input field of depth w.r.t. still water level mapped onto computational grid
     real   , dimension(:)  , save, allocatable :: depth       ! user-defined input field of bottom level
+    real   , dimension(:)  , save, allocatable :: flobj       ! user-defined input field of floating objects
+    real   , dimension(:)  , save, allocatable :: flobjf      ! input field of floating objects mapped onto computational grid
     real   , dimension(:)  , save, allocatable :: fric        ! user-defined input field of friction
     real   , dimension(:,:), save, allocatable :: fricf       ! input field of friction at three time levels mapped onto computational grid
     real   , dimension(:)  , save, allocatable :: gsiz        ! user-defined input field of characterstic grain size of armour rock

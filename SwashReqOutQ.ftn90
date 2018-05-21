@@ -11,7 +11,7 @@ subroutine SwashReqOutQ ( found )
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -100,7 +100,7 @@ subroutine SwashReqOutQ ( found )
     ! ==========================================================================
     !
     ! BLOCK   'sname'  HEAD / NOHEAD  'fname' (LAY-OUT [idla])                 &
-    !       < TSEC|XP|YP|DIST|DEP|BOTL|WATL|VMAG|VDIR|VEL|VKSI|VETA|           &
+    !       < TSEC|XP|YP|DEP|BOTL|WATL|DRAF|VMAG|VDIR|VEL|VKSI|VETA|           &
     !         PRESS|NHPRES|QMAG|QDIR|DISCH|QKSI|QETA|VORT|WMAG|WDIR|WIND|      &
     !         FRC|USTAR|UFRIC|ZK|HK|VMAGK|VDIRK|VELK|VKSIK|VETAK|              &
     !         VZ|VOMEGA|QMAGK|QDIRK|DISCHK|QKSIK|QETAK|PRESSK|NHPRSK|          &
@@ -118,6 +118,10 @@ subroutine SwashReqOutQ ( found )
        if ( ierr /= 0 ) goto 800
        if ( pstype /= 'F' .and. pstype /= 'H' .and. pstype /= 'U' ) then
           call msgerr (2, 'set of output locations is not correct type')
+          goto 800
+       endif
+       if ( psname(1:6) == 'NOGRID' ) then
+          call msgerr (2, 'empty set is not allowed')
           goto 800
        endif
        !
@@ -240,13 +244,14 @@ subroutine SwashReqOutQ ( found )
     ! ==========================================================================
     !
     ! TABLE   'sname'  HEAD | NOHEAD | STAB | SWASH | IND  'fname'             &
-    !       < TIME|TSEC|XP|YP|DIST|DEP|BOTL|WATL|VMAG|VDIR|VEL|VKSI|VETA|      &
+    !       < TIME|TSEC|XP|YP|DIST|DEP|BOTL|WATL|DRAF|VMAG|VDIR|VEL|VKSI|VETA| &
     !         PRESS|NHPRES|QMAG|QDIR|DISCH|QKSI|QETA|VORT|WMAG|WDIR|WIND|FRC|  &
     !         USTAR|UFRIC|ZK|HK|VMAGK|VDIRK|VELK|VKSIK|VETAK|VZ|VOMEGA|        &
     !         QMAGK|QDIRK|DISCHK|QKSIK|QETAK|PRESSK|NHPRSK|TKE|EPS|VISC|       &
     !         HS|HRMS|SETUP|MVMAG|MVDIR|MVEL|MVKSI|MVETA|MVMAGK|MVDIRK|        &
-    !         MVELK|MVKSIK|MVETAK|MTKE|MEPS|MVISC|SAL|TEMP|SED|                &
-    !         MSAL|MTEMP|MSED|SALK|TEMPK|SEDK|MSALK|MTEMPK|MSEDK>              &
+    !         MVELK|MVKSIK|MVETAK|MTKE|MEPS|MVISC|SAL|TEMP|SED|MSAL|MTEMP|     &
+    !         MSED|SALK|TEMPK|SEDK|MSALK|MTEMPK|MSEDK|FORCEX|FORCEY|FORCEZ|    &
+    !         MOMX|MOMY|MOMZ >                                                 &
     !         (OUTPUT [tbegtbl] [delttbl] SEC/MIN/HR/DAY)
     !
     ! ==========================================================================
@@ -307,6 +312,13 @@ subroutine SwashReqOutQ ( found )
  120   call svartp (ivtype)
        if ( ivtype == 98 ) goto 130
        if ( ivtype /= 999 ) then
+          if ( ivtype < 100 .and. ivtype /= 41 .and. psname(1:6) == 'NOGRID' ) then
+             call msgerr (2, 'empty set not allowed for this quantity')
+             write (PRINTF, *) ' -> ', ovsnam(ivtype)
+          endif
+          if ( ivtype == 113 .and. .not.oned ) then
+             call msgerr (1, 'wave runup height will not be computed in 2D mode')
+          endif
           if ( ovsvty(ivtype) == 7 ) then
              call msgerr (2, 'type of output not allowed for this quantity')
              write (PRINTF, *) ' -> ', ovsnam(ivtype)

@@ -11,7 +11,7 @@ subroutine SwashExpLay2DHflow
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -708,7 +708,7 @@ subroutine SwashExpLay2DHflow
     !
     ! compute friction due to vegetation, if appropriate
     !
-    if ( iveg == 1 ) then
+    if ( iveg /= 0 ) then
        !
        do k = 1, kmax
           !
@@ -2281,7 +2281,7 @@ subroutine SwashExpLay2DHflow
     !
     ! compute friction due to vegetation, if appropriate
     !
-    if ( iveg == 1 ) then
+    if ( iveg /= 0 ) then
        !
        do k = 1, kmax
           !
@@ -4122,6 +4122,43 @@ subroutine SwashExpLay2DHflow
                       !
                       amatw(nm,k,1) = amatw(nm,k,1) + cpoks(nm,k) / (dt*thetaw)
                       rhsw (nm,k  ) = rhsw (nm,k  ) + cpoks(nm,k) * w0(nm,k) / (dt*thetaw)
+                      !
+                   endif
+                   !
+                enddo
+             enddo
+             !
+          enddo
+          !
+       endif
+       !
+       ! compute friction due to vegetation modelled as horizontal cylinders, if appropriate
+       !
+       if ( ivegw /= 0 ) then
+          !
+          do k = 0, kmax-1
+             !
+             kd = max(k,1)
+             !
+             do n = nfu, nl
+                do m = mfu, ml
+                   !
+                   md = m - 1
+                   nd = n - 1
+                   !
+                   nm  = kgrpnt(m ,n )
+                   nmd = kgrpnt(md,n )
+                   ndm = kgrpnt(m ,nd)
+                   !
+                   ! for permanently dry neighbours, corresponding values will be mirrored
+                   !
+                   if ( nmd == 1 ) nmd = nm
+                   if ( ndm == 1 ) ndm = nm
+                   !
+                   if ( wets(nm) == 1 ) then
+                      !
+                      amatw(nm,k,1) = amatw(nm,k,1) + 0.125 * ( cvegu(nm,kd,1) + cvegu(nmd,kd,1) + cvegu(nm,k+1,1) + cvegu(nmd,k+1,1) +  &
+                                                                cvegv(nm,kd,1) + cvegv(ndm,kd,1) + cvegv(nm,k+1,1) + cvegv(ndm,k+1,1) ) * abs(w0(nm,k))
                       !
                    endif
                    !

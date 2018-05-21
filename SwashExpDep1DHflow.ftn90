@@ -11,7 +11,7 @@ subroutine SwashExpDep1DHflow ( u1, u0, ua, up, qx, qm, q, dq, gmat, rho, ibl, i
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -855,6 +855,32 @@ subroutine SwashExpDep1DHflow ( u1, u0, ua, up, qx, qm, q, dq, gmat, rho, ibl, i
                    endif
                    !
                 endif
+                !
+             endif
+             !
+          enddo
+          !
+       endif
+       !
+       ! add vegetation dissipation due to horizontal cylinders
+       !
+       if ( ivegw /= 0 ) then
+          !
+          do m = mfu, ml
+             !
+             md = m - 1
+             !
+             nm  = kgrpnt(m )
+             nmd = kgrpnt(md)
+             !
+             if ( wets(nm) == 1 ) then
+                !
+                ! compute vegetation factor
+                !
+                cveg = 0.25 * ( cvegu(nm,1,1) + cvegu(nmd,1,1) ) * dt * abs( w0top(nm) + w0bot(nm) )
+                !
+                w1top(nm) = w1top(nm) - cveg * w1bot(nm)
+                w1top(nm) = w1top(nm) / ( 1. + cveg )
                 !
              endif
              !

@@ -11,7 +11,7 @@ subroutine SwashComputFlow
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -92,7 +92,7 @@ subroutine SwashComputFlow
              !
              ! semi-implicit approach
              !
-             call SwashImpDep1DHflow ( u1(1,1), u0(1,1), ua(1,1), up(1,1), qx(1,1), qm(1,1), q(1,1), dq(1,1), gmatu(1,1,1), rho(1,1), ibl(1), ibr(1), kgrpnt(1,1) )
+             call SwashImpDep1DHflow ( u1(1,1), u0(1,1), ua(1,1), up(1,1), qx(1,1), qm(1,1), q(1,1), dq(1,1), gmatu(1,1,1), rho(1,1), ui(1,1), dqgrd(1,1), ibl(1), ibr(1), kgrpnt(1,1) )
              if (STPNOW()) return
              !
           endif
@@ -146,7 +146,7 @@ subroutine SwashComputFlow
              !
              ! semi-implicit approach
              !
-             call SwashImpDep2DHflow ( u1(1,1), u0(1,1), ua(1,1), ua2(1,1), up(1,1), qx(1,1), qxm(1,1), v1(1,1), v0(1,1), qy(1,1), qym(1,1), q(1,1), dq(1,1), gmatu(1,1,1), gmatv(1,1,1), rho(1,1) )
+             call SwashImpDep2DHflow ( u1(1,1), u0(1,1), ua(1,1), ua2(1,1), up(1,1), qx(1,1), qxm(1,1), v1(1,1), v0(1,1), qy(1,1), qym(1,1), q(1,1), dq(1,1), gmatu(1,1,1), gmatv(1,1,1), rho(1,1), ui(1,1), dqgrdu(1,1), vi(1,1), dqgrdv(1,1) )
              if (STPNOW()) return
              !
           endif

@@ -21,7 +21,7 @@ module SwashCommdata1
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -63,8 +63,8 @@ module SwashCommdata1
 !
 !   Module parameters
 !
-    integer, parameter                         :: nmovar = 95 ! maximum number of output variables
-    integer, parameter                         :: moutpa =  5 ! number of output parameters
+    integer, parameter                         :: nmovar = 120 ! maximum number of output variables
+    integer, parameter                         :: moutpa =   5 ! number of output parameters
 !
 !   Module variables
 !
@@ -137,7 +137,7 @@ module SwashCommdata2
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -262,7 +262,7 @@ module SwashCommdata3
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -305,9 +305,10 @@ module SwashCommdata3
 !   Module parameters
 !
     integer, parameter                         :: mbot  =  5  ! dimension of array pbot
-    integer, parameter                         :: mnums = 55  ! dimension of array pnums
+    integer, parameter                         :: mnums = 60  ! dimension of array pnums
     integer, parameter                         :: mpor  =  5  ! dimension of array ppor
     integer, parameter                         :: msed  = 15  ! dimension of array psed
+    integer, parameter                         :: mship =  5  ! dimension of array pship
     integer, parameter                         :: msurf =  5  ! dimension of array psurf
     integer, parameter                         :: mturb =  5  ! dimension of array pturb
     integer, parameter                         :: mwnd  = 10  ! dimension of array pwnd
@@ -436,6 +437,12 @@ module SwashCommdata3
     real                                       :: hvisc       ! horizontal viscosity
     real                                       :: lmix        ! mixing length
     !
+    ! parameters for floating objects
+    !
+    integer                                    :: ifloat      ! indicator floating objects
+                                                              ! =0; no floating objects
+                                                              ! =1; include floating objects
+    !
     ! parameters for physics
     !
     integer                                    :: ihvisc      ! indicator horizontal eddy viscosity
@@ -466,9 +473,13 @@ module SwashCommdata3
     integer                                    :: iturb       ! indicator turbulence modelling
                                                               ! =0; no turbulence
                                                               ! =1; standard k-eps model
-    integer                                    :: iveg        ! indicator vegetation
+    integer                                    :: iveg        ! indicator vegetation with force in horizontal direction
                                                               ! =0; no vegetation
-                                                              ! =1; vegetation included
+                                                              ! =1; vegetation friction included
+                                                              ! =2; vegetation friction and porosity included
+    integer                                    :: ivegw       ! indicator vegetation with force in vertical direction
+                                                              ! =0; no vegetation
+                                                              ! =1; vegetation friction included
     integer                                    :: iwind       ! indicator wind stress
                                                               ! =0; no wind stress
                                                               ! =1; constant drag coefficient
@@ -506,6 +517,11 @@ module SwashCommdata3
                                                               ! =11; critical bed shear stress for deposition (cohesive sediment)
                                                               ! =12; entrainment rate for erosion flux (cohesive sediment)
                                                               ! =13; empirical constant used in stability factor for sediment-laden BBL (=5.5)
+    real, dimension(mship)                     :: pship       ! parameters for floating objects
+                                                              ! = 1; compressibility factor for flow beneath fixed floating object
+                                                              ! = 2; theta; implicitness factor for time integration used beneath floating object
+                                                              !      =0.5: Crank-Nicolson
+                                                              !      =1.0: implicit Euler
     real, dimension(msurf)                     :: psurf       ! parameters for control of wave breaking
                                                               ! =1; threshold parameter corresponding to onset of wave breaking
                                                               ! =2; threshold parameter corresponding to re-initiation of breaking in post-breaking area
@@ -654,13 +670,16 @@ module SwashCommdata3
                                                               ! =53; mbound; upper bound for PL-kappa scheme i.c. vertical advection in transport equation
                                                               ! =54; phieby; parameter for Sweby-phi limiter i.c. vertical advection in transport equation
                                                               ! =55; not used
-    real*8, dimension(50,5)                    :: rcompt      !
+                                                              ! =58; relative accuracy with respect to water level in the pressure projection method
+                                                              ! =59; maximum number of iterations to be performed in the pressure projection method
+    real*8, dimension(300,5)                   :: rcompt      !
     !
     logical                                    :: bnaut       ! indicates whether nautical or Cartesian directions are used
     logical                                    :: coriolis    ! indicates whether Coriolis force should be included or not
     logical                                    :: corrdep     ! water depth in velocity point is corrected to 2nd order accuracy or not
     logical                                    :: depcds      ! water depth in velocity point approximated by central differences only
     logical                                    :: horwinc     ! horizontal terms of w-momentum equation included or not
+    logical                                    :: lpproj      ! indicates whether non-hydrostatic pressure part in pressure projection method is included in continuity equation or not
     logical                                    :: lreptx      ! indicates whether the domain repeats itself in x-direction or not
     logical                                    :: lrepty      ! indicates whether the domain repeats itself in y-direction or not
     logical                                    :: lprecon     ! indicates whether preconditioner should be applied or not
@@ -689,7 +708,7 @@ module SwashCommdata4
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -782,7 +801,7 @@ module SwashTimecomm
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as

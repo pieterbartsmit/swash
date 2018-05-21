@@ -34,7 +34,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -529,7 +529,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -756,7 +756,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -945,7 +945,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1252,7 +1252,7 @@
               IF (OVSVTY(IVTYPE).LE.2) THEN
                 WRITE (NREF, 102) OVSNAM(IVTYPE), OVLNAM(IVTYPE)
                 WRITE (NREF, 102) OVUNIT(IVTYPE), 'unit'
-                IF ( IVTYPE.LE.50 ) THEN
+                IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
                    WRITE (NREF, 103) 1, 'dimension in vertical'
                 ELSE IF ( IVTYPE.LE.70 ) THEN
                    WRITE (NREF, 103) KMAX+1, 'dimension in vertical'
@@ -1264,7 +1264,7 @@
               ELSE
                 WRITE (NREF, 102) 'X-'//OVSNAM(IVTYPE), OVLNAM(IVTYPE)
                 WRITE (NREF, 102) OVUNIT(IVTYPE), 'unit'
-                IF ( IVTYPE.LE.50 ) THEN
+                IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
                    WRITE (NREF, 103) 1, 'dimension in vertical'
                 ELSE IF ( IVTYPE.LE.70 ) THEN
                    WRITE (NREF, 103) KMAX+1, 'dimension in vertical'
@@ -1274,7 +1274,7 @@
                 WRITE (NREF, 104) OVEXCV(IVTYPE), 'exception value'
                 WRITE (NREF, 102) 'Y-'//OVSNAM(IVTYPE), OVLNAM(IVTYPE)
                 WRITE (NREF, 102) OVUNIT(IVTYPE), 'unit'
-                IF ( IVTYPE.LE.50 ) THEN
+                IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
                    WRITE (NREF, 103) 1, 'dimension in vertical'
                 ELSE IF ( IVTYPE.LE.70 ) THEN
                    WRITE (NREF, 103) KMAX+1, 'dimension in vertical'
@@ -1332,7 +1332,7 @@
                 IF (NUMDEC.GT.9) NUMDEC = 9                               40.00
                 WRITE (FSTR(6:6), '(I1)') NUMDEC                          40.00
               ENDIF
-              IF ( IVTYPE.LE.50 ) THEN
+              IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
 !                    write value into OUTLIN
                 WRITE (OUTLIN(LINKAR:LINKAR+LFIELD-1), FMT=FSTR)
      &                 VOQ(IP,VOQR(IVTYPE))
@@ -1344,7 +1344,7 @@
                 ENDIF
               ENDIF
             ELSE
-              IF ( IVTYPE.LE.50 ) THEN
+              IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
                  WRITE(NREF,FMT=FLT_SWASH) VOQ(IP,VOQR(IVTYPE))
                  IF (OVSVTY(IVTYPE).EQ.3) THEN
                     WRITE(NREF,FMT=FLT_SWASH) VOQ(IP,VOQR(IVTYPE)+1)
@@ -1367,14 +1367,15 @@
             ENDIF
           ENDIF
           IF (RTYPE.NE.'TABU' .AND. RTYPE.NE.'TABV') THEN
-             IF ( IVTYPE.LE.50 ) THEN
+             IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 ) THEN
                 LINKAR = LINKAR + LFIELD + 1
                 OUTLIN(LINKAR-1:LINKAR) = '  '
              ENDIF
           ENDIF
   60    CONTINUE
         IF (RTYPE.NE.'TABU' .AND. RTYPE.NE.'TABV') THEN
-           IF ( IVTYPE.LE.50 ) WRITE (NREF, '(A)') OUTLIN(1:LINKAR-1)
+           IF ( IVTYPE.LE.50 .OR. IVTYPE.GE.100 )
+     &        WRITE (NREF, '(A)') OUTLIN(1:LINKAR-1)
         ENDIF
        END IF                                                             40.51
   70  CONTINUE
@@ -1405,7 +1406,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -1703,7 +1704,7 @@
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as

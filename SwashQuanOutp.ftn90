@@ -11,7 +11,7 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -544,6 +544,7 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
                 oparr(indx,2) = 0.5 * ( s1(indx) + s1(indxr) )
                 !
                 oparr(indx,1) = oparr(indx,2) + depf(indx)
+                if ( ifloat == 1 ) oparr(indx,1) = min( depf(indx)-flobjf(indx), oparr(indx,1) )
                 !
                 oparr(indx,16) = 0.5 * ( hindun(indx) + hindun(indxr) )
                 !
@@ -669,6 +670,7 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
                 oparr(indx,2) = s1(indxr)
                 !
                 oparr(indx,1) = oparr(indx,2) + dps(indxr)
+                if ( ifloat == 1 ) oparr(indx,1) = min( dps(indxr)-flos(indxr), oparr(indx,1) )
                 !
                 oparr(indx,16) = hindun(indxr)
                 !
@@ -983,6 +985,7 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
                    oparr(indx,2) = 0.25 * ( s1(indx) + s1(indxr) + s1(indxu) + s1(indxs) )
                    !
                    oparr(indx,1) = oparr(indx,2) + depf(indx)
+                   if ( ifloat == 1 ) oparr(indx,1) = min( depf(indx)-flobjf(indx), oparr(indx,1) )
                    !
                    oparr(indx,16) = 0.25 * ( hindun(indx) + hindun(indxr) + hindun(indxu) + hindun(indxs) )
                    !
@@ -1007,9 +1010,19 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
                       if ( indxu == 1 ) indxu = indx
                       if ( indxs == 1 ) indxs = indx
                       !
-                      oparr(indx,11) = 0.25 * ( logfrc(indx ,1)*logfrc(indx ,2) + logfrc(indxr,1)*logfrc(indxr,2) + &
-                                                logfrc(indxu,1)*logfrc(indxu,2) + logfrc(indxs,1)*logfrc(indxs,2) )
-                      oparr(indx,12) = oparr(indx,11)
+                      fac  = 0.25 * ( logfrc(indx ,1)*logfrc(indx ,2) + logfrc(indxr,1)*logfrc(indxr,2) + &
+                                      logfrc(indxu,1)*logfrc(indxu,2) + logfrc(indxs,1)*logfrc(indxs,2) )
+                      !
+                      fac1 = 0.5 * ( u1(indx,kmax) + u1(indxu,kmax) )
+                      fac2 = 0.5 * ( v1(indx,kmax) + v1(indxr,kmax) )
+                      !
+                      if ( fac1 /= 0. .or. fac2 /= 0. ) then
+                         oparr(indx,11) = fac * fac1 / sqrt( fac1*fac1 + fac2*fac2 )
+                         oparr(indx,12) = fac * fac2 / sqrt( fac1*fac1 + fac2*fac2 )
+                      else
+                         oparr(indx,11) = 0.
+                         oparr(indx,12) = 0.
+                      endif
                       !
                    enddo
                 enddo
@@ -1345,6 +1358,7 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
                    oparr(indx,2) = s1(indxs)
                    !
                    oparr(indx,1) = oparr(indx,2) + dps(indxs)
+                   if ( ifloat == 1 ) oparr(indx,1) = min( dps(indxs)-flos(indxs), oparr(indx,1) )
                    !
                    oparr(indx,16) = hindun(indxs)
                    !
@@ -1359,14 +1373,28 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
                    do i = 1, mxc - 1
                       !
                       indx  = kgrpnt(i  ,j  )
+                      indxr = kgrpnt(i+1,j  )
+                      indxu = kgrpnt(i  ,j+1)
                       indxs = kgrpnt(i+1,j+1)
                       !
                       ! for permanently dry neighbours, corresponding values will be mirrored
                       !
+                      if ( indxr == 1 ) indxr = indx
+                      if ( indxu == 1 ) indxu = indx
                       if ( indxs == 1 ) indxs = indx
                       !
-                      oparr(indx,11) = logfrc(indxs,1)*logfrc(indxs,2)
-                      oparr(indx,12) = oparr(indx,11)
+                      fac  = logfrc(indxs,1)*logfrc(indxs,2)
+                      !
+                      fac1 = 0.5 * ( u1(indxs,kmax) + u1(indxu,kmax) )
+                      fac2 = 0.5 * ( v1(indxs,kmax) + v1(indxr,kmax) )
+                      !
+                      if ( fac1 /= 0. .or. fac2 /= 0. ) then
+                         oparr(indx,11) = fac * fac1 / sqrt( fac1*fac1 + fac2*fac2 )
+                         oparr(indx,12) = fac * fac2 / sqrt( fac1*fac1 + fac2*fac2 )
+                      else
+                         oparr(indx,11) = 0.
+                         oparr(indx,12) = 0.
+                      endif
                       !
                    enddo
                 enddo
@@ -2075,8 +2103,10 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
              voq(i,jvy) = sincq*rval1 + coscq*rval2
           enddo
        else
-          voq(:,jvx) = u10 * cos(wdip - alpq)
-          voq(:,jvy) = u10 * sin(wdip - alpq)
+          rval1 = u10 * cos(wdip)
+          rval2 = u10 * sin(wdip)
+          voq(:,jvx) = coscq*rval1 - sincq*rval2
+          voq(:,jvy) = sincq*rval1 + coscq*rval2
        endif
     endif
     !
@@ -2296,6 +2326,26 @@ subroutine SwashQuanOutp ( oqproc, mip, nvoqp, nvoqk, xc, yc, voqr, voq, voqk, i
           call SWIPOL ( oparr(1,31), ovexcv(45), xc, yc, mip, voq(1,voqr(45)), kgrpnt, oparr(1,1) )
        else
           call SwanInterpolateOutput ( voq(1,voqr(45)), voq(1,1), voq(1,2), oparr(1,31), mip, kvert, ovexcv(45) )
+       endif
+    endif
+    !
+    ! draft of floating object
+    !
+    if ( oqproc(46) ) then
+       if ( optg /= 5 ) then
+          ! interpolation done in all active and non-active points
+          rval1  = epsdry
+          epsdry = -99999.
+          call SWIPOL ( flobjf, ovexcv(46), xc, yc, mip, voq(1,voqr(46)), kgrpnt, oparr(1,1) )
+          epsdry = rval1
+       else
+          ! interpolation done in all active and non-active points
+          allocate(ltmp(nverts))
+          ltmp(:)        = vert(:)%active
+          vert(:)%active = .true.
+          call SwanInterpolateOutput ( voq(1,voqr(46)), voq(1,1), voq(1,2), flobjf, mip, kvert, ovexcv(46) )
+          vert(:)%active = ltmp(:)
+          deallocate(ltmp)
        endif
     endif
     !

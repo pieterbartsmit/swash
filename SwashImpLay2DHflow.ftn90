@@ -11,7 +11,7 @@ subroutine SwashImpLay2DHflow
 !
 !
 !     SWASH (Simulating WAves till SHore); a non-hydrostatic wave-flow model
-!     Copyright (C) 2010-2017  Delft University of Technology
+!     Copyright (C) 2010-2018  Delft University of Technology
 !
 !     This program is free software; you can redistribute it and/or
 !     modify it under the terms of the GNU General Public License as
@@ -32,10 +32,12 @@ subroutine SwashImpLay2DHflow
 !   Authors
 !
 !    1.00: Marcel Zijlema
+!    4.05: Dirk Rijnsdorp
 !
 !   Updates
 !
 !    1.00, December 2013: New subroutine
+!    4.05,  January 2017: extension floating objects
 !
 !   Purpose
 !
@@ -81,7 +83,7 @@ subroutine SwashImpLay2DHflow
     use SwashTimecomm
     use m_genarr, only: kgrpnt, guu, guv, gvu, gvv, gsqs, gsqsu, gsqsv, msta, mend, nsta, nend, sbimp, slimp, srimp, stimp, work
     use m_parall
-    use SwashSolvedata, only: icond
+    use SwashSolvedata, only: icond, newton
     use SwashFlowdata
 !
     implicit none
@@ -94,6 +96,7 @@ subroutine SwashImpLay2DHflow
 !
     integer, save                      :: ient = 0 ! number of entries in this subroutine
     integer                            :: j        ! loop counter
+    integer                            :: jj       ! iteration counter
     integer                            :: k        ! loop counter over vertical layers
     integer                            :: kd       ! index of layer k-1
     integer                            :: kdd      ! index of layer k-2
@@ -101,8 +104,10 @@ subroutine SwashImpLay2DHflow
     integer                            :: kuu      ! index of layer k+2
     integer                            :: l        ! loop counter
     integer                            :: m        ! loop counter
+    integer                            :: maxit    ! maximum number of iterations
     integer                            :: md       ! index of point m-1
     integer                            :: mdd      ! index of point m-2
+    integer                            :: minf     ! m-index of point with largest error in solution
     integer                            :: mlast    ! index of last internal u-point
     integer                            :: mu       ! index of point m+1
     integer                            :: muu      ! index of point m+2
@@ -116,6 +121,7 @@ subroutine SwashImpLay2DHflow
     integer                            :: nfm      ! pointer to m,nf
     integer                            :: nfum     ! pointer to m,nfu
     integer                            :: nfuum    ! pointer to m,nfuu
+    integer                            :: ninf     ! n-index of point with largest error in solution
     integer                            :: nlast    ! index of last internal v-point
     integer                            :: nlm      ! pointer to m,nl
     integer                            :: nldm     ! pointer to m,nld
@@ -144,9 +150,12 @@ subroutine SwashImpLay2DHflow
     real                               :: dxl      ! local mesh size in x-direction
     real                               :: dyl      ! local mesh size in y-direction
     real                               :: ener     ! total energy of closed system
+    real                               :: epslin   ! required accuracy in the linear solver
     real                               :: fac      ! a factor
     real                               :: fac1     ! another factor
     real                               :: fac2     ! some other factor
+    real                               :: fac3     ! auxiliary factor
+    real                               :: fac4     ! auxiliary factor
     real                               :: fluxlim  ! flux limiter
     real                               :: grad1    ! solution gradient
     real                               :: grad2    ! another solution gradient
@@ -159,7 +168,11 @@ subroutine SwashImpLay2DHflow
     real                               :: kwd      ! =1. if layer k-1 exists otherwise 0.
     real                               :: kwu      ! =1. if layer k+1 exists otherwise 0.
     real                               :: moutf    ! net mass outflow
+    real                               :: reps     ! accuracy of the final approximation
+    real                               :: res      ! residual
+    real                               :: resm     ! maximum error
     real                               :: rhou     ! density of water in velocity point
+    real                               :: rval     ! auxiliary real
     real                               :: rxxs     ! component of Reynolds stress tensor Rxx in current wl-point
     real                               :: rxxsu    ! component of Reynolds stress tensor Rxx in wl-point right from point of consideration
     real                               :: rxxu     ! component of Reynolds stress tensor Rxx in current u/v-point
@@ -169,8 +182,7 @@ subroutine SwashImpLay2DHflow
     real                               :: ryys     ! component of Reynolds stress tensor Ryy in current wl-point
     real                               :: ryysu    ! component of Reynolds stress tensor Ryy in wl-point up from point of consideration
     real                               :: ryyu     ! component of Reynolds stress tensor Ryy in current u/v-point
-    real                               :: theta    ! implicitness factor for time integration of continuity equation
-    real                               :: theta2   ! implicitness factor for water level gradient
+    real                               :: s0mx     ! maximum value of water level
     real                               :: theta3   ! implicitness factor for non-hydrostatic pressure gradient
     real                               :: thetau   ! implicitness factor for vertical terms in u- and v-momentum equations
     real                               :: thetaw   ! implicitness factor for vertical terms in w-momentum equation
@@ -180,6 +192,7 @@ subroutine SwashImpLay2DHflow
     real                               :: vol      ! total displaced volume of water
     real                               :: w        ! w-velocity at point different from its point of definition
     !
+    logical                            :: EQREAL   ! compares two reals
     logical                            :: lmask    ! masks points for including curvature stress terms
     logical                            :: STPNOW   ! indicates that program must stop
     !
@@ -193,11 +206,62 @@ subroutine SwashImpLay2DHflow
 !
     if (ltrace) call strace (ient,'SwashImpLay2DHflow')
     !
-    theta  = pnums( 1)
-    theta2 = pnums( 4)
+    tetau  = pnums( 1)
+    tetav  = pnums( 1)
+    teta2  = pnums( 4)
     theta3 = pnums( 5)
     thetau = pnums(31)
     thetaw = pnums(32)
+    !
+    ! adapt theta values underneath the floating object, if appropriate
+    !
+    if ( ifloat == 1 ) then
+       !
+       do n = nfu, nl
+          do m = mf, ml
+             nm = kgrpnt(m,n)
+             if ( presu(nm) == 1 ) tetau(nm) = pship(2)
+          enddo
+       enddo
+       !
+       call SWEXCHG ( tetau, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       do m = mfu, ml
+          do n = nf, nl
+             nm = kgrpnt(m,n)
+             if ( presv(nm) == 1 ) tetav(nm) = pship(2)
+          enddo
+       enddo
+       !
+       call SWEXCHG ( tetav, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       ! not computed for points ml and nl at subdomain interfaces since, these end points are owned by the neighbouring subdomains
+       !
+       mend(1) = ml - 1
+       if ( LMXL ) mend(1) = ml
+       !
+       nend(1) = nl - 1
+       if ( LMYL ) nend(1) = nl
+       !
+       do n = nfu, nend(1)
+          do m = mfu, mend(1)
+             nm = kgrpnt(m,n)
+             if ( presp(nm) == 1 ) teta2(nm) = pship(2)
+          enddo
+       enddo
+       !
+       call SWEXCHG ( teta2, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       ! synchronize theta values at appropriate boundaries in case of repeating grid
+       !
+       call periodic ( tetau, kgrpnt, 1, 1 )
+       call periodic ( tetav, kgrpnt, 1, 1 )
+       call periodic ( teta2, kgrpnt, 1, 1 )
+       !
+    endif
     !
     sbimp = .false.
     slimp = .false.
@@ -709,7 +773,7 @@ subroutine SwashImpLay2DHflow
     !
     ! compute friction due to vegetation, if appropriate
     !
-    if ( iveg == 1 ) then
+    if ( iveg /= 0 ) then
        !
        do k = 1, kmax
           !
@@ -801,6 +865,9 @@ subroutine SwashImpLay2DHflow
        !
        do k = 1, kmax
           !
+          kd = max(k-1,1   )
+          ku = min(k+1,kmax)
+          !
           do n = nfu, nl
              !
              nmf = kgrpnt(mf,n)
@@ -820,10 +887,64 @@ subroutine SwashImpLay2DHflow
                    fac1 = zks(nmu,k-1) - zks(nm,k-1)
                    fac2 = zks(nmu,k  ) - zks(nm,k  )
                    !
-                   gmatu(nm,k,1) = (-hks(nm ,k) - fac1) * fac
-                   gmatu(nm,k,2) = (-hks(nm ,k) + fac2) * fac
-                   gmatu(nm,k,3) = ( hks(nmu,k) - fac1) * fac
-                   gmatu(nm,k,4) = ( hks(nmu,k) + fac2) * fac
+                   if ( presu(nm) == 0 ) then
+                      !
+                      ! free surface flow
+                      !
+                      gmatu(nm,k,1) = (-hks(nm ,k) - fac1) * fac
+                      gmatu(nm,k,2) = (-hks(nm ,k) + fac2) * fac
+                      gmatu(nm,k,3) = ( hks(nmu,k) - fac1) * fac
+                      gmatu(nm,k,4) = ( hks(nmu,k) + fac2) * fac
+                      gmatu(nm,k,5) = 0.
+                      gmatu(nm,k,6) = 0.
+                      !
+                   else
+                      !
+                      ! pressurized flow
+                      !
+                      if ( presp(nm) == 0 .and. presp(nmu) == 1 ) then
+                         !
+                         ! changeover from free surface to pressurized
+                         !
+                         fac3 = 1. / ( hks(nmu,kd) + hks(nmu,k ) )
+                         fac4 = 1. / ( hks(nmu,k ) + hks(nmu,ku) )
+                         !
+                         gmatu(nm,k,1) = (-hks(nm,k) - fac1) * fac
+                         gmatu(nm,k,2) = (-hks(nm,k) + fac2) * fac
+                         gmatu(nm,k,3) = -fac1 * hks(nmu,k)*fac3 * fac
+                         gmatu(nm,k,4) = (2.*hks(nmu,k) - fac1 * hks(nmu,kd)*fac3 + fac2 * hks(nmu,ku)*fac4 ) * fac
+                         gmatu(nm,k,5) = 0.
+                         gmatu(nm,k,6) = fac2 * hks(nmu,k)*fac4 * fac
+                         !
+                      else if ( presp(nm) == 1 .and. presp(nmu) == 0 ) then
+                         !
+                         ! changeover from pressurized to free surface
+                         !
+                         fac3 = 1. / ( hks(nm,kd) + hks(nm,k ) )
+                         fac4 = 1. / ( hks(nm,k ) + hks(nm,ku) )
+                         !
+                         gmatu(nm,k,1) = -fac1 * hks(nm,k)*fac3 * fac
+                         gmatu(nm,k,2) = (-2.*hks(nm,k) - fac1 * hks(nm,kd)*fac3 + fac2 * hks(nm,ku)*fac4 ) * fac
+                         gmatu(nm,k,3) = ( hks(nmu,k) - fac1) * fac
+                         gmatu(nm,k,4) = ( hks(nmu,k) + fac2) * fac
+                         gmatu(nm,k,5) = fac2 * hks(nm,k)*fac4 * fac
+                         gmatu(nm,k,6) = 0.
+                         !
+                      else
+                         !
+                         fac1 = 0.5 * fac1 / ( gvu(nm) * ( hkum(nm,kd) + hkum(nm,k ) ) )
+                         fac2 = 0.5 * fac2 / ( gvu(nm) * ( hkum(nm,k ) + hkum(nm,ku) ) )
+                         !
+                         gmatu(nm,k,1) = -fac1
+                         gmatu(nm,k,2) = ( -hks(nm ,k)/gvu(nm) - hkum(nm,kd)*fac1 + hkum(nm,ku)*fac2 ) / hkum(nm,k)
+                         gmatu(nm,k,3) = -fac1
+                         gmatu(nm,k,4) = (  hks(nmu,k)/gvu(nm) - hkum(nm,kd)*fac1 + hkum(nm,ku)*fac2 ) / hkum(nm,k)
+                         gmatu(nm,k,5) =  fac2
+                         gmatu(nm,k,6) =  fac2
+                         !
+                      endif
+                      !
+                   endif
                    !
                 else
                    !
@@ -831,6 +952,8 @@ subroutine SwashImpLay2DHflow
                    gmatu(nm,k,2) = 0.
                    gmatu(nm,k,3) = 0.
                    gmatu(nm,k,4) = 0.
+                   gmatu(nm,k,5) = 0.
+                   gmatu(nm,k,6) = 0.
                    !
                 endif
                 !
@@ -842,6 +965,8 @@ subroutine SwashImpLay2DHflow
                 gmatu(nmf,k,1) = 0.
                 gmatu(nmf,k,4) = gmatu(nmf,k,4) - gmatu(nmf,k,2)
                 gmatu(nmf,k,2) = 0.
+                gmatu(nmf,k,6) = gmatu(nmf,k,6) - gmatu(nmf,k,5)
+                gmatu(nmf,k,5) = 0.
                 !
              endif
              !
@@ -851,6 +976,8 @@ subroutine SwashImpLay2DHflow
                 gmatu(nml,k,3) = 0.
                 gmatu(nml,k,2) = gmatu(nml,k,2) - gmatu(nml,k,4)
                 gmatu(nml,k,4) = 0.
+                gmatu(nml,k,5) = gmatu(nml,k,5) - gmatu(nml,k,6)
+                gmatu(nml,k,6) = 0.
                 !
              endif
              !
@@ -862,6 +989,50 @@ subroutine SwashImpLay2DHflow
           do m = mf, ml
              !
              nm = kgrpnt(m,n)
+             !
+             if ( presu(nm) == 1 ) then
+                !
+                ! pressurized flow
+                !
+                if ( presp(nm) == 0 .and. presp(nmu) == 1 ) then
+                   !
+                   ! changeover from free surface to pressurized
+                   !
+                   gmatu(nm,kmax,4) = gmatu(nm,kmax,4) + 2.*gmatu(nm,kmax,6)
+                   gmatu(nm,kmax,3) = gmatu(nm,kmax,3) -    gmatu(nm,kmax,6)
+                   gmatu(nm,kmax,6) = 0.
+                   !
+                   gmatu(nm,1,4) = gmatu(nm,1,4) + 2.*gmatu(nm,1,3)
+                   gmatu(nm,1,6) = gmatu(nm,1,6) -    gmatu(nm,1,3)
+                   !
+                else if ( presp(nm) == 1 .and. presp(nmu) == 0 ) then
+                   !
+                   ! changeover from pressurized to free surface
+                   !
+                   gmatu(nm,kmax,2) = gmatu(nm,kmax,2) + 2.*gmatu(nm,kmax,5)
+                   gmatu(nm,kmax,1) = gmatu(nm,kmax,1) -    gmatu(nm,kmax,5)
+                   gmatu(nm,kmax,5) = 0.
+                   !
+                   gmatu(nm,1,2) = gmatu(nm,1,2) + 2.*gmatu(nm,1,1)
+                   gmatu(nm,1,5) = gmatu(nm,1,5) -    gmatu(nm,1,1)
+                   !
+                else
+                   !
+                   gmatu(nm,kmax,2) = gmatu(nm,kmax,2) + 2.*gmatu(nm,kmax,5)
+                   gmatu(nm,kmax,1) = gmatu(nm,kmax,1) -    gmatu(nm,kmax,5)
+                   gmatu(nm,kmax,4) = gmatu(nm,kmax,4) + 2.*gmatu(nm,kmax,6)
+                   gmatu(nm,kmax,3) = gmatu(nm,kmax,3) -    gmatu(nm,kmax,6)
+                   gmatu(nm,kmax,5) = 0.
+                   gmatu(nm,kmax,6) = 0.
+                   !
+                   gmatu(nm,1,2) = gmatu(nm,1,2) + 2.*gmatu(nm,1,1)
+                   gmatu(nm,1,5) = gmatu(nm,1,5) -    gmatu(nm,1,1)
+                   gmatu(nm,1,4) = gmatu(nm,1,4) + 2.*gmatu(nm,1,3)
+                   gmatu(nm,1,6) = gmatu(nm,1,6) -    gmatu(nm,1,3)
+                   !
+                endif
+                !
+             endif
              !
              gmatu(nm,1,1) = 0.
              gmatu(nm,1,3) = 0.
@@ -972,8 +1143,44 @@ subroutine SwashImpLay2DHflow
              gmatu(nm,kmax,5) = 0.
              gmatu(nm,kmax,6) = 0.
              !
-             gmatu(nm,1,2) = gmatu(nm,1,2) - gmatu(nm,1,1)
-             gmatu(nm,1,4) = gmatu(nm,1,4) - gmatu(nm,1,3)
+             if ( presu(nm) == 0 ) then
+                !
+                ! free surface flow
+                !
+                gmatu(nm,1,2) = gmatu(nm,1,2) - gmatu(nm,1,1)
+                gmatu(nm,1,4) = gmatu(nm,1,4) - gmatu(nm,1,3)
+                !
+             else
+                !
+                ! pressurized flow
+                !
+                if ( presp(nm) == 0 .and. presp(nmu) == 1 ) then
+                   !
+                   ! changeover from free surface to pressurized
+                   !
+                   gmatu(nm,1,2) = gmatu(nm,1,2) -    gmatu(nm,1,1)
+                   gmatu(nm,1,4) = gmatu(nm,1,4) + 2.*gmatu(nm,1,3)
+                   gmatu(nm,1,6) = gmatu(nm,1,6) -    gmatu(nm,1,3)
+                   !
+                else if ( presp(nm) == 1 .and. presp(nmu) == 0 ) then
+                   !
+                   ! changeover from pressurized to free surface
+                   !
+                   gmatu(nm,1,2) = gmatu(nm,1,2) + 2.*gmatu(nm,1,1)
+                   gmatu(nm,1,5) = gmatu(nm,1,5) -    gmatu(nm,1,1)
+                   gmatu(nm,1,4) = gmatu(nm,1,4) -    gmatu(nm,1,3)
+                   !
+                else
+                   !
+                   gmatu(nm,1,2) = gmatu(nm,1,2) + 2.*gmatu(nm,1,1)
+                   gmatu(nm,1,5) = gmatu(nm,1,5) -    gmatu(nm,1,1)
+                   gmatu(nm,1,4) = gmatu(nm,1,4) + 2.*gmatu(nm,1,3)
+                   gmatu(nm,1,6) = gmatu(nm,1,6) -    gmatu(nm,1,3)
+                   !
+                endif
+                !
+             endif
+             !
              gmatu(nm,1,1) = 0.
              gmatu(nm,1,3) = 0.
              !
@@ -1768,7 +1975,7 @@ subroutine SwashImpLay2DHflow
                    !
                 endif
                 !
-                if ( uwetp(nm) == 1 ) then
+                if ( uwetp(nm) == 1 .and. presu(nm) /= 1 ) then
                    !
                    u1(nm,k) = u1(nm,k) - dt * ( fac1 * ua(nmu,k)  - fac2 * ua(nm,k) ) / gvu(nm)
                    !
@@ -1828,7 +2035,7 @@ subroutine SwashImpLay2DHflow
                    !
                 endif
                 !
-                if ( uwetp(nm) == 1 ) then
+                if ( uwetp(nm) == 1 .and. presu(nm) /= 1 ) then
                    !
                    u1(nm,k) = u1(nm,k) - dt * ( fac1 * ua2(nm,k) - fac2 * ua2(ndm,k) ) / guu(nm)
                    !
@@ -2282,7 +2489,7 @@ subroutine SwashImpLay2DHflow
     !
     ! compute friction due to vegetation, if appropriate
     !
-    if ( iveg == 1 ) then
+    if ( iveg /= 0 ) then
        !
        do k = 1, kmax
           !
@@ -2374,6 +2581,9 @@ subroutine SwashImpLay2DHflow
        !
        do k = 1, kmax
           !
+          kd = max(k-1,1   )
+          ku = min(k+1,kmax)
+          !
           do m = mfu, ml
              !
              nfm = kgrpnt(m,nf)
@@ -2393,10 +2603,64 @@ subroutine SwashImpLay2DHflow
                    fac1 = zks(num,k-1) - zks(nm,k-1)
                    fac2 = zks(num,k  ) - zks(nm,k  )
                    !
-                   gmatv(nm,k,1) = (-hks(nm ,k) - fac1) * fac
-                   gmatv(nm,k,2) = (-hks(nm ,k) + fac2) * fac
-                   gmatv(nm,k,3) = ( hks(num,k) - fac1) * fac
-                   gmatv(nm,k,4) = ( hks(num,k) + fac2) * fac
+                   if ( presv(nm) == 0 ) then
+                      !
+                      ! free surface flow
+                      !
+                      gmatv(nm,k,1) = (-hks(nm ,k) - fac1) * fac
+                      gmatv(nm,k,2) = (-hks(nm ,k) + fac2) * fac
+                      gmatv(nm,k,3) = ( hks(num,k) - fac1) * fac
+                      gmatv(nm,k,4) = ( hks(num,k) + fac2) * fac
+                      gmatv(nm,k,5) = 0.
+                      gmatv(nm,k,6) = 0.
+                      !
+                   else
+                      !
+                      ! pressurized flow
+                      !
+                      if ( presp(nm) == 0 .and. presp(num) == 1 ) then
+                         !
+                         ! changeover from free surface to pressurized
+                         !
+                         fac3 = 1. / ( hks(num,kd) + hks(num,k ) )
+                         fac4 = 1. / ( hks(num,k ) + hks(num,ku) )
+                         !
+                         gmatv(nm,k,1) = (-hks(nm,k) - fac1) * fac
+                         gmatv(nm,k,2) = (-hks(nm,k) + fac2) * fac
+                         gmatv(nm,k,3) = -fac1 * hks(num,k)*fac3 * fac
+                         gmatv(nm,k,4) = (2.*hks(num,k) - fac1 * hks(num,kd)*fac3 + fac2 * hks(num,ku)*fac4 ) * fac
+                         gmatv(nm,k,5) = 0.
+                         gmatv(nm,k,6) = fac2 * hks(num,k)*fac4 * fac
+                         !
+                      else if ( presp(nm) == 1 .and. presp(num) == 0 ) then
+                         !
+                         ! changeover from pressurized to free surface
+                         !
+                         fac3 = 1. / ( hks(nm,kd) + hks(nm,k ) )
+                         fac4 = 1. / ( hks(nm,k ) + hks(nm,ku) )
+                         !
+                         gmatv(nm,k,1) = -fac1 * hks(nm,k)*fac3 * fac
+                         gmatv(nm,k,2) = (-2.*hks(nm,k) - fac1 * hks(nm,kd)*fac3 + fac2 * hks(nm,ku)*fac4 ) * fac
+                         gmatv(nm,k,3) = ( hks(num,k) - fac1) * fac
+                         gmatv(nm,k,4) = ( hks(num,k) + fac2) * fac
+                         gmatv(nm,k,5) = fac2 * hks(nm,k)*fac4 * fac
+                         gmatv(nm,k,6) = 0.
+                         !
+                      else
+                         !
+                         fac1 = 0.5 * fac1 / ( guv(nm) * ( hkvm(nm,kd) + hkvm(nm,k ) ) )
+                         fac2 = 0.5 * fac2 / ( guv(nm) * ( hkvm(nm,k ) + hkvm(nm,ku) ) )
+                         !
+                         gmatv(nm,k,1) = -fac1
+                         gmatv(nm,k,2) = ( -hks(nm ,k)/guv(nm) - hkvm(nm,kd)*fac1 + hkvm(nm,ku)*fac2 ) / hkvm(nm,k)
+                         gmatv(nm,k,3) = -fac1
+                         gmatv(nm,k,4) = (  hks(num,k)/guv(nm) - hkvm(nm,kd)*fac1 + hkvm(nm,ku)*fac2 ) / hkvm(nm,k)
+                         gmatv(nm,k,5) =  fac2
+                         gmatv(nm,k,6) =  fac2
+                         !
+                      endif
+                      !
+                   endif
                    !
                 else
                    !
@@ -2404,6 +2668,8 @@ subroutine SwashImpLay2DHflow
                    gmatv(nm,k,2) = 0.
                    gmatv(nm,k,3) = 0.
                    gmatv(nm,k,4) = 0.
+                   gmatv(nm,k,5) = 0.
+                   gmatv(nm,k,6) = 0.
                    !
                 endif
                 !
@@ -2415,6 +2681,8 @@ subroutine SwashImpLay2DHflow
                 gmatv(nfm,k,1) = 0.
                 gmatv(nfm,k,4) = gmatv(nfm,k,4) - gmatv(nfm,k,2)
                 gmatv(nfm,k,2) = 0.
+                gmatv(nfm,k,6) = gmatv(nfm,k,6) - gmatv(nfm,k,5)
+                gmatv(nfm,k,5) = 0.
                 !
              endif
              !
@@ -2424,6 +2692,8 @@ subroutine SwashImpLay2DHflow
                 gmatv(nlm,k,3) = 0.
                 gmatv(nlm,k,2) = gmatv(nlm,k,2) - gmatv(nlm,k,4)
                 gmatv(nlm,k,4) = 0.
+                gmatv(nlm,k,5) = gmatv(nlm,k,5) - gmatv(nlm,k,6)
+                gmatv(nlm,k,6) = 0.
                 !
              endif
              !
@@ -2435,6 +2705,50 @@ subroutine SwashImpLay2DHflow
           do n = nf, nl
              !
              nm = kgrpnt(m,n)
+             !
+             if ( presv(nm) == 1 ) then
+                !
+                ! pressurized flow
+                !
+                if ( presp(nm) == 0 .and. presp(num) == 1 ) then
+                   !
+                   ! changeover from free surface to pressurized
+                   !
+                   gmatv(nm,kmax,4) = gmatv(nm,kmax,4) + 2.*gmatv(nm,kmax,6)
+                   gmatv(nm,kmax,3) = gmatv(nm,kmax,3) -    gmatv(nm,kmax,6)
+                   gmatv(nm,kmax,6) = 0.
+                   !
+                   gmatv(nm,1,4) = gmatv(nm,1,4) + 2.*gmatv(nm,1,3)
+                   gmatv(nm,1,6) = gmatv(nm,1,6) -    gmatv(nm,1,3)
+                   !
+                else if ( presp(nm) == 1 .and. presp(num) == 0 ) then
+                   !
+                   ! changeover from pressurized to free surface
+                   !
+                   gmatv(nm,kmax,2) = gmatv(nm,kmax,2) + 2.*gmatv(nm,kmax,5)
+                   gmatv(nm,kmax,1) = gmatv(nm,kmax,1) -    gmatv(nm,kmax,5)
+                   gmatv(nm,kmax,5) = 0.
+                   !
+                   gmatv(nm,1,2) = gmatv(nm,1,2) + 2.*gmatv(nm,1,1)
+                   gmatv(nm,1,5) = gmatv(nm,1,5) -    gmatv(nm,1,1)
+                   !
+                else
+                   !
+                   gmatv(nm,kmax,2) = gmatv(nm,kmax,2) + 2.*gmatv(nm,kmax,5)
+                   gmatv(nm,kmax,1) = gmatv(nm,kmax,1) -    gmatv(nm,kmax,5)
+                   gmatv(nm,kmax,4) = gmatv(nm,kmax,4) + 2.*gmatv(nm,kmax,6)
+                   gmatv(nm,kmax,3) = gmatv(nm,kmax,3) -    gmatv(nm,kmax,6)
+                   gmatv(nm,kmax,5) = 0.
+                   gmatv(nm,kmax,6) = 0.
+                   !
+                   gmatv(nm,1,2) = gmatv(nm,1,2) + 2.*gmatv(nm,1,1)
+                   gmatv(nm,1,5) = gmatv(nm,1,5) -    gmatv(nm,1,1)
+                   gmatv(nm,1,4) = gmatv(nm,1,4) + 2.*gmatv(nm,1,3)
+                   gmatv(nm,1,6) = gmatv(nm,1,6) -    gmatv(nm,1,3)
+                   !
+                endif
+                !
+             endif
              !
              gmatv(nm,1,1) = 0.
              gmatv(nm,1,3) = 0.
@@ -2545,8 +2859,44 @@ subroutine SwashImpLay2DHflow
              gmatv(nm,kmax,5) = 0.
              gmatv(nm,kmax,6) = 0.
              !
-             gmatv(nm,1,2) = gmatv(nm,1,2) - gmatv(nm,1,1)
-             gmatv(nm,1,4) = gmatv(nm,1,4) - gmatv(nm,1,3)
+             if ( presv(nm) == 0 ) then
+                !
+                ! free surface flow
+                !
+                gmatv(nm,1,2) = gmatv(nm,1,2) - gmatv(nm,1,1)
+                gmatv(nm,1,4) = gmatv(nm,1,4) - gmatv(nm,1,3)
+                !
+             else
+                !
+                ! pressurized flow
+                !
+                if ( presp(nm) == 0 .and. presp(num) == 1 ) then
+                   !
+                   ! changeover from free surface to pressurized
+                   !
+                   gmatv(nm,1,2) = gmatv(nm,1,2) -    gmatv(nm,1,1)
+                   gmatv(nm,1,4) = gmatv(nm,1,4) + 2.*gmatv(nm,1,3)
+                   gmatv(nm,1,6) = gmatv(nm,1,6) -    gmatv(nm,1,3)
+                   !
+                else if ( presp(nm) == 1 .and. presp(num) == 0 ) then
+                   !
+                   ! changeover from pressurized to free surface
+                   !
+                   gmatv(nm,1,2) = gmatv(nm,1,2) + 2.*gmatv(nm,1,1)
+                   gmatv(nm,1,5) = gmatv(nm,1,5) -    gmatv(nm,1,1)
+                   gmatv(nm,1,4) = gmatv(nm,1,4) -    gmatv(nm,1,3)
+                   !
+                else
+                   !
+                   gmatv(nm,1,2) = gmatv(nm,1,2) + 2.*gmatv(nm,1,1)
+                   gmatv(nm,1,5) = gmatv(nm,1,5) -    gmatv(nm,1,1)
+                   gmatv(nm,1,4) = gmatv(nm,1,4) + 2.*gmatv(nm,1,3)
+                   gmatv(nm,1,6) = gmatv(nm,1,6) -    gmatv(nm,1,3)
+                   !
+                endif
+                !
+             endif
+             !
              gmatv(nm,1,1) = 0.
              gmatv(nm,1,3) = 0.
              !
@@ -3352,7 +3702,7 @@ subroutine SwashImpLay2DHflow
                    !
                 endif
                 !
-                if ( vwetp(nm) == 1 ) then
+                if ( vwetp(nm) == 1 .and. presv(nm) /= 1 ) then
                    !
                    v1(nm,k) = v1(nm,k) - dt * ( fac1 * ua2(nm,k) - fac2 * ua2(nmd,k) ) / gvv(nm)
                    !
@@ -3401,7 +3751,7 @@ subroutine SwashImpLay2DHflow
                    !
                 endif
                 !
-                if ( vwetp(nm) == 1 ) then
+                if ( vwetp(nm) == 1 .and. presv(nm) /= 1 ) then
                    !
                    v1(nm,k) = v1(nm,k) - dt * ( fac1 * ua(num,k)  - fac2 * ua(nm,k) ) / guv(nm)
                    !
@@ -3427,962 +3777,147 @@ subroutine SwashImpLay2DHflow
     !
     if ( propsc /= 1 ) call periodic ( v1, kgrpnt, 1, kmax )
     !
-    ! compute the water level
+    ui = u1
+    vi = v1
     !
-    fac = grav * theta * theta2 * dt * dt
+    ! determine maximum of water level and required accuracy
     !
-    ! first, build the equation for water level correction
+    s0mx   = maxval(abs(s0))
+    reps   = pnums(58)
+    epslin = max(reps,reps*s0mx)
+    call SWREDUCE ( epslin, 1, SWREAL, SWMAX )
     !
-    do n = nfu, nl
-       do m = mfu, ml
-          !
-          md = m - 1
-          nd = n - 1
-          !
-          nm  = kgrpnt(m ,n )
-          nmd = kgrpnt(md,n )
-          ndm = kgrpnt(m ,nd)
-          !
-          ! for permanently dry neighbours, corresponding values will be mirrored
-          !
-          if ( nmd == 1 ) nmd = nm
-          if ( ndm == 1 ) ndm = nm
-          !
-          if ( m /= mfu .or. slimp(n) .or. .not.LMXF ) then
-             !
-             amat(nm,2) = -fac * guu(nmd) * hu(nmd) / gvu(nmd)
-             !
-          else
-             !
-             amat(nm,2) = 0.
-             !
-          endif
-          !
-          if ( m /= ml .or. srimp(n) .or. .not.LMXL ) then
-             !
-             amat(nm,3) = -fac * guu(nm) * hu(nm) / gvu(nm)
-             !
-          else
-             !
-             amat(nm,3) = 0.
-             !
-          endif
-          !
-          if ( n /= nfu .or. sbimp(m) .or. .not.LMYF ) then
-             !
-             amat(nm,4) = -fac * gvv(ndm) * hv(ndm) / guv(ndm)
-             !
-          else
-             !
-             amat(nm,4) = 0.
-             !
-          endif
-          !
-          if ( n /= nl .or. stimp(m) .or. .not.LMYL ) then
-             !
-             amat(nm,5) = -fac * gvv(nm) * hv(nm) / guv(nm)
-             !
-          else
-             !
-             amat(nm,5) = 0.
-             !
-          endif
-          !
-          amat(nm,1) = gsqs(nm) - amat(nm,2) - amat(nm,3) - amat(nm,4) - amat(nm,5)
-          !
-          fac1 = 0.
-          fac2 = 0.
-          !
-          do k = 1, kmax
-             !
-             fac1 = fac1 + hku(nmd,k)* ( theta*u1(nmd,k) + (1.-theta)*u0(nmd,k) )
-             fac2 = fac2 + hku(nm ,k)* ( theta*u1(nm ,k) + (1.-theta)*u0(nm ,k) )
-             !
-          enddo
-          !
-          rhs(nm) = dt * ( guu(nmd) * fac1 - guu(nm) * fac2 )
-          !
-          fac1 = 0.
-          fac2 = 0.
-          !
-          do k = 1, kmax
-             !
-             fac1 = fac1 + hkv(ndm,k)* ( theta*v1(ndm,k) + (1.-theta)*v0(ndm,k) )
-             fac2 = fac2 + hkv(nm ,k)* ( theta*v1(nm ,k) + (1.-theta)*v0(nm ,k) )
-             !
-          enddo
-          !
-          rhs(nm) = rhs(nm) + dt * ( gvv(ndm) * fac1 - gvv(nm) * fac2 )
-          !
-       enddo
-    enddo
+    ! initialize
     !
-    do n = nfu, nl
+    maxit = nint(pnums(59))
+    jj    = 0
+    resm  = epslin + 1.
+    !
+    ! start iteration process to obtain 2nd order accuracy in pressure projection method
+    !
+ 10 if ( resm > epslin .and. jj < maxit ) then
        !
-       nmf  = kgrpnt(mf ,n)
-       nmfu = kgrpnt(mfu,n)
-       nml  = kgrpnt(ml ,n)
-       nmlu = kgrpnt(mlu,n)
+       jj = jj + 1
        !
-       if ( slimp(n) ) then
-          !
-          ds  (nmf   ) = s1(nmf) - s0(nmf)
-          rhs (nmfu  ) = rhs(nmfu) - amat(nmfu,2)*ds(nmf)
-          amat(nmfu,2) = 0.
-          !
-       endif
+       resm = 0.
+       minf = 0
+       ninf = 0
        !
-       if ( srimp(n) ) then
-          !
-          ds  (nmlu ) = s1(nmlu) - s0(nmlu)
-          rhs (nml  ) = rhs(nml) - amat(nml,3)*ds(nmlu)
-          amat(nml,3) = 0.
-          !
-       endif
+       ! compute the water level
        !
-    enddo
-    !
-    do m = mfu, ml
+       fac = grav * dt * dt
        !
-       nfm  = kgrpnt(m,nf )
-       nfum = kgrpnt(m,nfu)
-       nlm  = kgrpnt(m,nl )
-       nlum = kgrpnt(m,nlu)
+       ! first, build the equation for water level correction
        !
-       if ( sbimp(m) ) then
-          !
-          ds  (nfm   ) = s1(nfm) - s0(nfm)
-          rhs (nfum  ) = rhs(nfum) - amat(nfum,4)*ds(nfm)
-          amat(nfum,4) = 0.
-          !
-       endif
-       !
-       if ( stimp(m) ) then
-          !
-          ds  (nlum ) = s1(nlum) - s0(nlum)
-          rhs (nlm  ) = rhs(nlm) - amat(nlm,5)*ds(nlum)
-          amat(nlm,5) = 0.
-          !
-       endif
-       !
-    enddo
-    !
-    ! next, solve the equation for water level correction
-    !
-    call pcg( amat, rhs, ds )
-    if (STPNOW()) return
-    !
-    ! set to zero for permanently dry points
-    !
-    ds(1) = 0.
-    !
-    ! exchange water level corrections with neighbouring subdomains
-    !
-    call SWEXCHG ( ds, kgrpnt, 1, 1 )
-    if (STPNOW()) return
-    !
-    ! synchronize water level correction at appropriate boundaries in case of repeating grid
-    !
-    call periodic ( ds, kgrpnt, 1, 1 )
-    !
-    ! correct horizontal velocities
-    !
-    do k = 1, kmax
-       !
-       do n = nfu, nl
-          do m = msta(n), mend(n)
-             !
-             mu = m + 1
-             !
-             nm  = kgrpnt(m ,n)
-             nmu = kgrpnt(mu,n)
-             !
-             if ( wetu(nm) == 1 .and. nmu /= 1 ) then
-                !
-                u1(nm,k) = u1(nm,k) - grav * theta2 * dt * ( ds(nmu) - ds(nm) ) / gvu(nm)
-                !
-             endif
-             !
-          enddo
-       enddo
-       !
-       do m = mfu, ml
-          do n = nsta(m), nend(m)
-             !
-             nu = n + 1
-             !
-             nm  = kgrpnt(m,n )
-             num = kgrpnt(m,nu)
-             !
-             if ( wetv(nm) == 1 .and. num /= 1 ) then
-                !
-                v1(nm,k) = v1(nm,k) - grav * theta2 * dt * ( ds(num) - ds(nm) ) / guv(nm)
-                !
-             endif
-             !
-          enddo
-       enddo
-       !
-    enddo
-    !
-    ! exchange velocities with neighbouring subdomains
-    !
-    call SWEXCHG ( u1, kgrpnt, 1, kmax )
-    if (STPNOW()) return
-    !
-    call SWEXCHG ( v1, kgrpnt, 1, kmax )
-    if (STPNOW()) return
-    !
-    ! synchronize velocities at appropriate boundaries in case of repeating grid
-    !
-    call periodic ( u1, kgrpnt, 1, kmax )
-    call periodic ( v1, kgrpnt, 1, kmax )
-    !
-    ! update water level
-    !
-    do n = nfu, nl
-       do m = mfu, ml
-          !
-          nm = kgrpnt(m,n)
-          !
-          s1(nm) = s0(nm) + ds(nm)
-          !
-       enddo
-    enddo
-    !
-    ! copy to virtual cells at boundaries except for both water level and Riemann invariant openings
-    !
-    if ( .not.lreptx ) then
-       !
-       do n = nfu, nl
-          !
-          nmf  = kgrpnt(mf ,n)
-          nmfu = kgrpnt(mfu,n)
-          nml  = kgrpnt(ml ,n)
-          nmlu = kgrpnt(mlu,n)
-          !
-          if ( ibl(n) /= 2 .and. ibl(n) /= 6 .and. LMXF ) s1(nmf ) = s1(nmfu)
-          if ( ibr(n) /= 2 .and. ibr(n) /= 6 .and. LMXL ) s1(nmlu) = s1(nml )
-          !
-       enddo
-       !
-    endif
-    !
-    if ( .not.lrepty ) then
-       !
-       do m = mfu, ml
-          !
-          nfm  = kgrpnt(m,nf )
-          nfum = kgrpnt(m,nfu)
-          nlm  = kgrpnt(m,nl )
-          nlum = kgrpnt(m,nlu)
-          !
-          if ( ibb(m) /= 2 .and. ibb(m) /= 6 .and. LMYF ) s1(nfm ) = s1(nfum)
-          if ( ibt(m) /= 2 .and. ibt(m) /= 6 .and. LMYL ) s1(nlum) = s1(nlm )
-          !
-       enddo
-       !
-    endif
-    !
-    ! in case of outflow condition, no change in water depth
-    !
-    do n = nfu, nl
-       !
-       nmf   = kgrpnt(mf   ,n)
-       nmfu  = kgrpnt(mfu  ,n)
-       nmfuu = kgrpnt(mfu+1,n)
-       nml   = kgrpnt(ml   ,n)
-       nmld  = kgrpnt(ml-1 ,n)
-       nmlu  = kgrpnt(mlu  ,n)
-       !
-       if ( ibl(n) == 10 ) s1(nmf ) = s1(nmfu) - dps(nmfu) + dps(nmfuu)
-       if ( ibr(n) == 10 ) s1(nmlu) = s1(nml ) - dps(nml ) + dps(nmld )
-       !
-    enddo
-    !
-    do m = mfu, ml
-       !
-       nfm   = kgrpnt(m,nf   )
-       nfum  = kgrpnt(m,nfu  )
-       nfuum = kgrpnt(m,nfu+1)
-       nlm   = kgrpnt(m,nl   )
-       nldm  = kgrpnt(m,nl-1 )
-       nlum  = kgrpnt(m,nlu  )
-       !
-       if ( ibb(m) == 10 ) s1(nfm ) = s1(nfum) - dps(nfum) + dps(nfuum)
-       if ( ibt(m) == 10 ) s1(nlum) = s1(nlm ) - dps(nlm ) + dps(nldm )
-       !
-    enddo
-    !
-    ! build the w-momentum equation
-    !
-    if ( ihydro == 1 .or. ihydro == 2 ) then
-       !
-       ! initialize system of equations in dry points
-       !
-       do n = nfu, nl
-          do m = mfu, ml
-             !
-             nm = kgrpnt(m,n)
-             !
-             if ( wets(nm) /= 1 ) then
-                !
-                amatw(nm,:,1) = 1.
-                amatw(nm,:,2) = 0.
-                amatw(nm,:,3) = 0.
-                rhsw (nm,:  ) = 0.
-                !
-             endif
-             !
-          enddo
-       enddo
-       !
-       ! bottom:
-       !
-       ! the kinematic condition is imposed
-       !
-       do n = nfu, nl
-          do m = mfu, ml
-             !
-             md = m - 1
-             nd = n - 1
-             !
-             nm  = kgrpnt(m ,n )
-             nmd = kgrpnt(md,n )
-             ndm = kgrpnt(m ,nd)
-             !
-             ! for permanently dry neighbours, corresponding values will be mirrored
-             !
-             if ( nmd == 1 ) nmd = nm
-             if ( ndm == 1 ) ndm = nm
-             !
-             if ( wets(nm) == 1 ) then
-                !
-                dxl = 0.5 * ( gvv(nm) + gvv(ndm) )
-                dyl = 0.5 * ( guu(nm) + guu(nmd) )
-                !
-                amatw(nm,kmax,1) = 1.
-                amatw(nm,kmax,2) = 0.
-                amatw(nm,kmax,3) = 0.
-                w1   (nm,kmax  ) = 0.25 * ( 3.*(u1(nm,kmax)+u1(nmd,kmax)) - u1(nm,kmax-1) - u1(nmd,kmax-1) ) * ( zku(nm,kmax) - zku(nmd,kmax) ) / dxl +  &
-                                   0.25 * ( 3.*(v1(nm,kmax)+v1(ndm,kmax)) - v1(nm,kmax-1) - v1(ndm,kmax-1) ) * ( zkv(nm,kmax) - zkv(ndm,kmax) ) / dyl
-                rhsw (nm,kmax  ) = w1(nm,kmax)
-                !
-             endif
-             !
-          enddo
-       enddo
-       !
-       ! free surface and interior part:
-       !
-       ! compute the time derivative
-       !
-       do k = 0, kmax-1
+       if ( .not.newton ) then
           !
           do n = nfu, nl
              do m = mfu, ml
                 !
-                nm = kgrpnt(m,n)
+                md = m - 1
+                mu = m + 1
+                nd = n - 1
+                nu = n + 1
                 !
-                if ( wets(nm) == 1 ) then
-                   !
-                   amatw(nm,k,1) = 1. / (dt*thetaw)
-                   rhsw (nm,k  ) = w0(nm,k) / (dt*thetaw)
-                   !
-                endif
+                nm  = kgrpnt(m ,n )
+                nmd = kgrpnt(md,n )
+                nmu = kgrpnt(mu,n )
+                ndm = kgrpnt(m ,nd)
+                num = kgrpnt(m ,nu)
                 !
-             enddo
-          enddo
-          !
-       enddo
-       !
-       if ( horwinc ) then
-          !
-          ! compute horizontal advection terms (momentum conservative and explicit)
-          !
-          propsc = nint(pnums(16))
-          kappa  = pnums(17)
-          mbound = pnums(18)
-          phieby = pnums(19)
-          !
-          do k = 0, kmax-1
-             !
-             kd = max(k,1)
-             !
-             do n = nfu, nl
-                do m = mfu, ml
-                   !
-                   md  = m  - 1
-                   mdd = md - 1
-                   mu  = m  + 1
-                   muu = mu + 1
-                   !
-                   if (                   LMXF .and. mdd < mf  ) mdd = mf
-                   if ( .not.lreptx .and. LMXL .and. muu > ml  ) muu = ml
-                   if (      lreptx .and. LMXL .and. muu > mlu ) muu = mlu
-                   !
-                   nd  = n  - 1
-                   ndd = nd - 1
-                   nu  = n  + 1
-                   nuu = nu + 1
-                   !
-                   if (                   LMYF .and. ndd < nf  ) ndd = nf
-                   if ( .not.lrepty .and. LMYL .and. nuu > nl  ) nuu = nl
-                   if (      lrepty .and. LMYL .and. nuu > nlu ) nuu = nlu
-                   !
-                   nm   = kgrpnt(m  ,n  )
-                   nmd  = kgrpnt(md ,n  )
-                   nmdd = kgrpnt(mdd,n  )
-                   nmu  = kgrpnt(mu ,n  )
-                   nmuu = kgrpnt(muu,n  )
-                   ndm  = kgrpnt(m  ,nd )
-                   nddm = kgrpnt(m  ,ndd)
-                   num  = kgrpnt(m  ,nu )
-                   nuum = kgrpnt(m  ,nuu)
-                   !
-                   ! for permanently dry neighbours, corresponding values will be mirrored
-                   !
-                   if ( nmd  == 1 ) nmd  = nm
-                   if ( nmdd == 1 ) nmdd = nmd
-                   if ( nmu  == 1 ) nmu  = nm
-                   if ( nmuu == 1 ) nmuu = nmu
-                   if ( ndm  == 1 ) ndm  = nm
-                   if ( nddm == 1 ) nddm = ndm
-                   if ( num  == 1 ) num  = nm
-                   if ( nuum == 1 ) nuum = num
-                   !
-                   if ( wets(nm) == 1 ) then
-                      !
-                      ! advection term in x-direction
-                      !
-                      fac = 0.5 * gsqs(nm) * ( hks(nm,kd) + hks(nm,k+1) )
-                      !
-                      if ( uwetp(nmd) == 1 ) then
-                         fac1 = guu(nmd) * ( qx(nmd,k+1)*hku(nmd,kd) + qx(nmd,kd)*hku(nmd,k+1) ) / ( fac*( hku(nmd,kd) + hku(nmd,k+1) ) )
-                      else
-                         fac1 = 0.
-                      endif
-                      if ( uwetp(nm) == 1 ) then
-                         fac2 = guu(nm ) * ( qx(nm ,k+1)*hku(nm ,kd) + qx(nm ,kd)*hku(nm ,k+1) ) / ( fac*( hku(nm ,kd) + hku(nm ,k+1) ) )
-                      else
-                         fac2 = 0.
-                      endif
-                      !
-                      if ( propsc == 3 .and. kappa == 1. ) then
-                         !
-                         ! central differences
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) - 0.5 * ( fac1 * (w0(nm,k) - w0(nmd,k)) + fac2 * (w0(nmu,k) - w0(nm,k)) )
-                         !
-                      else
-                         !
-                         ! first order upwind scheme
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) - ( max(fac1,0.) * (w0(nm,k) - w0(nmd,k)) + min(fac2,0.) * (w0(nmu,k) - w0(nm,k)) )
-                         !
-                         ! add higher order (flux-limited) correction, if appropriate
-                         !
-                         if ( propsc /= 1 ) then
-                            !
-                            if ( fac2 > 0. ) then
-                               !
-                               grad1 = w0(nmu,k) - w0(nm ,k)
-                               grad2 = w0(nm ,k) - w0(nmd,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac2 * fluxlim(grad1,grad2)
-                               !
-                            else if ( fac2 < 0. ) then
-                               !
-                               grad1 = w0(nmu ,k) - w0(nm ,k)
-                               grad2 = w0(nmuu,k) - w0(nmu,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac2 * fluxlim(grad1,grad2)
-                               !
-                            endif
-                            !
-                            if ( fac1 > 0. ) then
-                               !
-                               grad1 = w0(nm ,k) - w0(nmd ,k)
-                               grad2 = w0(nmd,k) - w0(nmdd,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac1 * fluxlim(grad1,grad2)
-                               !
-                            else if ( fac1 < 0. ) then
-                               !
-                               grad1 = w0(nm ,k) - w0(nmd,k)
-                               grad2 = w0(nmu,k) - w0(nm ,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac1 * fluxlim(grad1,grad2)
-                               !
-                            endif
-                            !
-                         endif
-                         !
-                      endif
-                      !
-                      ! advection term in y-direction
-                      !
-                      if ( vwetp(ndm) == 1 ) then
-                         fac1 = gvv(ndm) * ( qy(ndm,k+1)*hkv(ndm,kd) + qy(ndm,kd)*hkv(ndm,k+1) ) / ( fac*( hkv(ndm,kd) + hkv(ndm,k+1) ) )
-                      else
-                         fac1 = 0.
-                      endif
-                      if ( vwetp(nm) == 1 ) then
-                         fac2 = gvv(nm ) * ( qy(nm ,k+1)*hkv(nm ,kd) + qy(nm ,kd)*hkv(nm ,k+1) ) / ( fac*( hkv(nm ,kd) + hkv(nm ,k+1) ) )
-                      else
-                         fac2 = 0.
-                      endif
-                      !
-                      if ( propsc == 3 .and. kappa == 1. ) then
-                         !
-                         ! central differences
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) - 0.5 * ( fac1 * (w0(nm,k) - w0(ndm,k)) + fac2 * (w0(num,k) - w0(nm,k)) )
-                         !
-                      else
-                         !
-                         ! first order upwind scheme
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) - ( max(fac1,0.) * (w0(nm,k) - w0(ndm,k)) + min(fac2,0.) * (w0(num,k) - w0(nm,k)) )
-                         !
-                         ! add higher order (flux-limited) correction, if appropriate
-                         !
-                         if ( propsc /= 1 ) then
-                            !
-                            if ( fac2 > 0. ) then
-                               !
-                               grad1 = w0(num,k) - w0(nm ,k)
-                               grad2 = w0(nm ,k) - w0(ndm,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac2 * fluxlim(grad1,grad2)
-                               !
-                            else if ( fac2 < 0. ) then
-                               !
-                               grad1 = w0(num ,k) - w0(nm ,k)
-                               grad2 = w0(nuum,k) - w0(num,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac2 * fluxlim(grad1,grad2)
-                               !
-                            endif
-                            !
-                            if ( fac1 > 0. ) then
-                               !
-                               grad1 = w0(nm ,k) - w0(ndm ,k)
-                               grad2 = w0(ndm,k) - w0(nddm,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac1 * fluxlim(grad1,grad2)
-                               !
-                            else if ( fac1 < 0. ) then
-                               !
-                               grad1 = w0(nm ,k) - w0(ndm,k)
-                               grad2 = w0(num,k) - w0(nm ,k)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac1 * fluxlim(grad1,grad2)
-                               !
-                            endif
-                            !
-                         endif
-                         !
-                      endif
-                      !
-                   endif
-                   !
-                enddo
-             enddo
-             !
-          enddo
-          !
-          ! compute horizontal viscosity term
-          !
-          if ( ihvisc == 1 .and. hvisc > 0. ) then
-             !
-             do k = 0, kmax-1
+                ! for permanently dry neighbours, corresponding values will be mirrored
                 !
-                kd = max(k,1)
+                if ( nmd == 1 ) nmd = nm
+                if ( nmu == 1 ) nmu = nm
+                if ( ndm == 1 ) ndm = nm
+                if ( num == 1 ) num = nm
                 !
-                do n = nfu, nl
-                   do m = mfu, ml
-                      !
-                      md = m - 1
-                      mu = m + 1
-                      nd = n - 1
-                      nu = n + 1
-                      !
-                      nm  = kgrpnt(m ,n )
-                      nmd = kgrpnt(md,n )
-                      nmu = kgrpnt(mu,n )
-                      ndm = kgrpnt(m ,nd)
-                      num = kgrpnt(m ,nu)
-                      !
-                      ! for permanently dry neighbours, corresponding values will be mirrored
-                      !
-                      if ( nmd == 1 ) nmd = nm
-                      if ( nmu == 1 ) nmu = nm
-                      if ( ndm == 1 ) ndm = nm
-                      if ( num == 1 ) num = nm
-                      !
-                      ! viscosity term in x-direction
-                      !
-                      if ( wets(nm) * wets(nmd) * wets(nmu) == 1 ) then
-                         !
-                         fac = 0.25 * ( gvv(nm) + gvv(ndm) ) * ( hks(nm,kd) + hks(nm,k+1) )
-                         !
-                         fac1 = 0.5 * hvisc * guu(nm ) * ( hkum(nm ,kd) + hkum(nm ,k+1) ) / gvu(nm )
-                         !
-                         fac2 = 0.5 * hvisc * guu(nmd) * ( hkum(nmd,kd) + hkum(nmd,k+1) ) / gvu(nmd)
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(nmu,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(nmd,k)) ) / fac
-                         !
-                      endif
-                      !
-                      ! viscosity term in y-direction
-                      !
-                      if ( wets(nm) * wets(ndm) * wets(num) == 1 ) then
-                         !
-                         fac = 0.25 * ( guu(nm) + guu(nmd) ) * ( hks(nm,kd) + hks(nm,k+1) )
-                         !
-                         fac1 = 0.5 * hvisc * gvv(nm ) * ( hkvm(nm ,kd) + hkvm(nm ,k+1) ) / guv(nm )
-                         !
-                         fac2 = 0.5 * hvisc * gvv(ndm) * ( hkvm(ndm,kd) + hkvm(ndm,k+1) ) / guv(ndm)
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(num,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(ndm,k)) ) / fac
-                         !
-                      endif
-                      !
-                   enddo
-                enddo
-                !
-             enddo
-             !
-          else if ( ihvisc > 1 ) then
-             !
-             do k = 0, kmax-1
-                !
-                kd = max(k,1)
-                !
-                do n = nfu, nl
-                   do m = mfu, ml
-                      !
-                      md = m - 1
-                      mu = m + 1
-                      nd = n - 1
-                      nu = n + 1
-                      !
-                      nm   = kgrpnt(m ,n )
-                      nmd  = kgrpnt(md,n )
-                      nmu  = kgrpnt(mu,n )
-                      ndm  = kgrpnt(m ,nd)
-                      num  = kgrpnt(m ,nu)
-                      ndmd = kgrpnt(md,nd)
-                      !
-                      ! for permanently dry neighbours, corresponding values will be mirrored
-                      !
-                      if ( nmd  == 1 ) nmd  = nm
-                      if ( nmu  == 1 ) nmu  = nm
-                      if ( ndm  == 1 ) ndm  = nm
-                      if ( num  == 1 ) num  = nm
-                      if ( ndmd == 1 ) ndmd = ndm
-                      !
-                      ! viscosity term in x-direction
-                      !
-                      if ( wets(nm) * wets(nmd) * wets(nmu) == 1 ) then
-                         !
-                         fac = 0.25 * ( gvv(nm) + gvv(ndm) ) * ( hks(nm,kd) + hks(nm,k+1) )
-                         !
-                         fac1 = 0.25 * ( vnu2d(nm ) + vnu2d(ndm ) ) * guu(nm ) * ( hkum(nm ,kd) + hkum(nm ,k+1) ) / gvu(nm )
-                         !
-                         fac2 = 0.25 * ( vnu2d(nmd) + vnu2d(ndmd) ) * guu(nmd) * ( hkum(nmd,kd) + hkum(nmd,k+1) ) / gvu(nmd)
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(nmu,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(nmd,k)) ) / fac
-                         !
-                      endif
-                      !
-                      ! viscosity term in y-direction
-                      !
-                      if ( wets(nm) * wets(ndm) * wets(num) == 1 ) then
-                         !
-                         fac = 0.25 * ( guu(nm) + guu(nmd) ) * ( hks(nm,kd) + hks(nm,k+1) )
-                         !
-                         fac1 = 0.25 * ( vnu2d(nm ) + vnu2d(nmd ) ) * gvv(nm ) * ( hkvm(nm ,kd) + hkvm(nm ,k+1) ) / guv(nm )
-                         !
-                         fac2 = 0.25 * ( vnu2d(ndm) + vnu2d(ndmd) ) * gvv(ndm) * ( hkvm(ndm,kd) + hkvm(ndm,k+1) ) / guv(ndm)
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(num,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(ndm,k)) ) / fac
-                         !
-                      endif
-                      !
-                   enddo
-                enddo
-                !
-             enddo
-             !
-          endif
-          !
-       endif
-       !
-       if ( verwinc ) then
-          !
-          ! compute vertical terms (implicit)
-          !
-          propsc = nint(pnums(41))
-          kappa  = pnums(42)
-          mbound = pnums(43)
-          phieby = pnums(44)
-          !
-          do k = 0, kmax-1
-             !
-             kd  = max(k  ,1   )
-             kdd = max(k-1,1   )
-             kuu = min(k+2,kmax)
-             !
-             do n = nfu, nl
-                do m = mfu, ml
+                if ( presp(nm) == 1 ) then
                    !
-                   nm = kgrpnt(m,n)
-                   !
-                   if ( wets(nm) == 1 ) then
-                      !
-                      ! advection term
-                      !
-                      ctrkt = ( wom(nm,kd-1) + wom(nm,kd  ) ) / ( hks(nm,kd) + hks(nm,k+1) )
-                      ctrkb = ( wom(nm,k   ) + wom(nm,k +1) ) / ( hks(nm,kd) + hks(nm,k+1) )
-                      !
-                      if ( k == 0 ) ctrkt = 0.
-                      !
-                      if ( propsc == 3 .and. kappa == 1. ) then
-                         !
-                         ! central differences
-                         !
-                         amatw(nm,k,1) = amatw(nm,k,1) - 0.5*ctrkt + 0.5*ctrkb
-                         amatw(nm,k,2) =  0.5*ctrkt
-                         amatw(nm,k,3) = -0.5*ctrkb
-                         !
-                      else
-                         !
-                         ! first order upwind scheme
-                         !
-                         amatw(nm,k,1) = amatw(nm,k,1) - ctrkt + ctrkb + max(ctrkt,0.) - min(ctrkb,0.)
-                         amatw(nm,k,2) =  min(ctrkt,0.)
-                         amatw(nm,k,3) = -max(ctrkb,0.)
-                         !
-                         ! add higher order (flux-limited) correction, if appropriate
-                         !
-                         if ( propsc /= 1 ) then
-                            !
-                            if ( ctrkt > 0. ) then
-                               !
-                               grad1 = w0(nm,kd-1) - w0(nm,k  )
-                               grad2 = w0(nm,k   ) - w0(nm,k+1)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) - 0.5 * ctrkt * fluxlim(grad1,grad2)
-                               !
-                            else if ( ctrkt < 0. ) then
-                               !
-                               grad1 = w0(nm,kd -1) - w0(nm,k   )
-                               grad2 = w0(nm,kdd-1) - w0(nm,kd-1)
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) + 0.5 * ctrkt * fluxlim(grad1,grad2)
-                               !
-                            endif
-                            !
-                            if ( ctrkb > 0. ) then
-                               !
-                               grad1 = w0(nm,k  ) - w0(nm,k  +1)
-                               grad2 = w0(nm,k+1) - w0(nm,kuu  )
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) + 0.5 * ctrkb * fluxlim(grad1,grad2)
-                               !
-                            else if ( ctrkb < 0. ) then
-                               !
-                               grad1 = w0(nm,k   ) - w0(nm,k+1)
-                               grad2 = w0(nm,kd-1) - w0(nm,k  )
-                               !
-                               rhsw(nm,k) = rhsw(nm,k) - 0.5 * ctrkb * fluxlim(grad1,grad2)
-                               !
-                            endif
-                            !
-                         endif
-                         !
-                      endif
-                      !
-                      ! viscosity term
-                      !
-                      ctrkt = ( vnu3d(nm,kd-1) + vnu3d(nm,kd  ) ) / ( hks(nm,kd  )*( hks(nm,kd) + hks(nm,k+1) ) )
-                      ctrkb = ( vnu3d(nm,k   ) + vnu3d(nm,k +1) ) / ( hks(nm,k +1)*( hks(nm,kd) + hks(nm,k+1) ) )
-                      !
-                      if ( k == 0 ) ctrkt = 0.
-                      !
-                      amatw(nm,k,1) = amatw(nm,k,1) + ctrkt + ctrkb
-                      amatw(nm,k,2) = amatw(nm,k,2) - ctrkt
-                      amatw(nm,k,3) = amatw(nm,k,3) - ctrkb
-                      !
-                   endif
-                   !
-                enddo
-             enddo
-             !
-          enddo
-          !
-       endif
-       !
-       ! build gradient matrix for non-hydrostatic pressure
-       !
-       if ( ihydro == 1 ) then
-          !
-          ! Keller-box scheme, so non-hydrostatic pressure is located at the centers of layer interfaces
-          !
-          do n = nfu, nl
-             do m = mfu, ml
-                !
-                nm = kgrpnt(m,n)
-                !
-                if ( wets(nm) == 1 ) then
-                   !
-                   gmatw(nm,:,1) =  2./hks(nm,:)
-                   gmatw(nm,:,2) = -gmatw(nm,:,1)
-                   !
-                   do k = 2, kmax
-                      !
-                      fac = 1.
-                      !
-                      do j = 1, kmax-k+1
-                         !
-                         fac = -fac
-                         !
-                         gmatw(nm,k-1,2*j+1) =  2.*fac/hks(nm,j+k-1)
-                         gmatw(nm,k-1,2*j+2) = -gmatw(nm,k-1,2*j+1)
-                         !
-                      enddo
-                      !
-                   enddo
+                   fac1 = pship(1)
                    !
                 else
                    !
-                   gmatw(nm,:,:) = 0.
+                   fac1 = 1.
                    !
                 endif
                 !
-                gmatw(nm,1,1) = 0.
-                !
-             enddo
-          enddo
-          !
-          ! to reduce the pressure Poisson equation set pressure of bottom face to that of top face for a number of layers
-          !
-          do l = 1, qlay
-             !
-             do n = nfu, nl
-                do m = mfu, ml
+                if ( m /= mfu .or. slimp(n) .or. .not.LMXF ) then
                    !
-                   nm = kgrpnt(m,n)
-                   !
-                   do k = 1, kmax
-                      !
-                      j = kmax +1 - k - l
-                      if ( j < 0 ) cycle
-                      !
-                      gmatw(nm,k,2*j+1) = gmatw(nm,k,2*j+1) + gmatw(nm,k,2*j+2)
-                      gmatw(nm,k,2*j+2) = 0.
-                      !
-                   enddo
-                   !
-                enddo
-             enddo
-             !
-          enddo
-          !
-       else if ( ihydro == 2 ) then
-          !
-          ! central differences, so non-hydrostatic pressure is located at the cell centers
-          !
-          do n = nfu, nl
-             do m = mfu, ml
-                !
-                nm = kgrpnt(m,n)
-                !
-                if ( wets(nm) == 1 ) then
-                   !
-                   do k = 1, kmax
-                      !
-                      kd = max(k-1,1)
-                      !
-                      gmatw(nm,k,1) =  2./(hks(nm,kd) + hks(nm,k))
-                      gmatw(nm,k,2) = -gmatw(nm,k,1)
-                      !
-                   enddo
+                   amat(nm,2) = -fac * tetau(nmd) * guu(nmd) * hu(nmd) / gvu(nmd)
                    !
                 else
                    !
-                   gmatw(nm,:,1) = 0.
-                   gmatw(nm,:,2) = 0.
+                   amat(nm,2) = 0.
                    !
                 endif
                 !
-                gmatw(nm,1,2) = gmatw(nm,1,2) - gmatw(nm,1,1)
-                gmatw(nm,1,1) = 0.
+                if ( m /= ml .or. srimp(n) .or. .not.LMXL ) then
+                   !
+                   amat(nm,3) = -fac * tetau(nm) * guu(nm) * hu(nm) / gvu(nm)
+                   !
+                else
+                   !
+                   amat(nm,3) = 0.
+                   !
+                endif
+                !
+                if ( n /= nfu .or. sbimp(m) .or. .not.LMYF ) then
+                   !
+                   amat(nm,4) = -fac * tetav(ndm) * gvv(ndm) * hv(ndm) / guv(ndm)
+                   !
+                else
+                   !
+                   amat(nm,4) = 0.
+                   !
+                endif
+                !
+                if ( n /= nl .or. stimp(m) .or. .not.LMYL ) then
+                   !
+                   amat(nm,5) = -fac * tetav(nm) * gvv(nm) * hv(nm) / guv(nm)
+                   !
+                else
+                   !
+                   amat(nm,5) = 0.
+                   !
+                endif
+                !
+                amat(nm,1) = fac1 * gsqs(nm) - teta2(nm) * ( amat(nm,2) + amat(nm,3) + amat(nm,4) + amat(nm,5) )
+                amat(nm,2) = teta2(nmd) * amat(nm,2)
+                amat(nm,3) = teta2(nmu) * amat(nm,3)
+                amat(nm,4) = teta2(ndm) * amat(nm,4)
+                amat(nm,5) = teta2(num) * amat(nm,5)
+                !
+                fac1 = 0.
+                fac2 = 0.
+                !
+                do k = 1, kmax
+                   !
+                   fac1 = fac1 + hku(nmd,k)* ( tetau(nmd)*ui(nmd,k) + (1.-tetau(nmd))*u0(nmd,k) )
+                   fac2 = fac2 + hku(nm ,k)* ( tetau(nm )*ui(nm ,k) + (1.-tetau(nm ))*u0(nm ,k) )
+                   !
+                enddo
+                !
+                rhs(nm) = dt * ( guu(nmd) * fac1 - guu(nm) * fac2 )
+                !
+                fac1 = 0.
+                fac2 = 0.
+                !
+                do k = 1, kmax
+                   !
+                   fac1 = fac1 + hkv(ndm,k)* ( tetav(ndm)*vi(ndm,k) + (1.-tetav(ndm))*v0(ndm,k) )
+                   fac2 = fac2 + hkv(nm ,k)* ( tetav(nm )*vi(nm ,k) + (1.-tetav(nm ))*v0(nm ,k) )
+                   !
+                enddo
+                !
+                rhs(nm) = rhs(nm) + dt * ( gvv(ndm) * fac1 - gvv(nm) * fac2 )
                 !
              enddo
           enddo
           !
-       endif
-       !
-       ! compute gradient of non-hydrostatic pressure
-       !
-       fac = (-1.)**kmax
-       !
-       if ( iproj == 1 ) then
-          fac1 = 1.
-       else if ( iproj == 2 ) then
-          fac1 = 1. - theta3
-       endif
-       !
-       do k = 0, kmax-1
+          ! add non-hydrostatic pressure part in the equation for water level correction (not piezometric head), if appropriate
           !
-          kd = max(k,1)
-          !
-          fac = -fac
-          !
-          do n = nfu, nl
-             do m = mfu, ml
-                !
-                nm = kgrpnt(m,n)
-                !
-                if ( wets(nm) == 1 ) then
-                   !
-                   if ( ihydro == 1 ) then
-                      !
-                      do j = 0, kmax-1
-                         !
-                         kd = max(k+j  ,1   )
-                         kd = min(kd   ,kmax)
-                         ku = min(k+j+1,kmax)
-                         !
-                         rhsw(nm,k) = rhsw(nm,k) - fac1 * ( gmatw(nm,k+1,2*j+1)*q(nm,kd) + gmatw(nm,k+1,2*j+2)*q(nm,ku) )
-                         !
-                      enddo
-                      !
-                      !rhsw(nm,k) = rhsw(nm,k) - fac * ( w1(nm,kmax) - w0(nm,kmax) ) / (dt*thetaw)
-                      !
-                   else
-                      !
-                      rhsw(nm,k) = rhsw(nm,k) - fac1 * ( gmatw(nm,k+1,1)*q(nm,kd) + gmatw(nm,k+1,2)*q(nm,k+1) )
-                      !
-                   endif
-                   !
-                endif
-                !
-             enddo
-          enddo
-          !
-       enddo
-       !
-       ! compute flow resistance inside porous medium, if appropriate
-       !
-       if ( iporos == 1 ) then
-          !
-          do k = 0, kmax-1
-             !
-             kd = max(k,1)
+          if ( lpproj ) then
              !
              do n = nfu, nl
                 do m = mfu, ml
@@ -4394,69 +3929,543 @@ subroutine SwashImpLay2DHflow
                    nmd = kgrpnt(md,n )
                    ndm = kgrpnt(m ,nd)
                    !
-                   ! for permanently dry neighbours, corresponding values will be mirrored
-                   !
-                   if ( nmd == 1 ) nmd = nm
-                   if ( ndm == 1 ) ndm = nm
-                   !
-                   if ( wets(nm) == 1 ) then
+                   if ( presp(nm) == 0 ) then
                       !
-                      u = 0.25 * ( u0(nm,kd) + u0(nmd,kd) + u0(nm,k+1) + u0(nmd,k+1) )
-                      v = 0.25 * ( v0(nm,kd) + v0(ndm,kd) + v0(nm,k+1) + v0(ndm,k+1) )
+                      fac1 = 0.
+                      fac2 = 0.
                       !
-                      utot = sqrt( u*u + v*v + w0(nm,k)*w0(nm,k) )
+                      do k = 1, kmax
+                         !
+                         fac1 = fac1 + hku(nmd,k) * dqgrdu(nmd,k)
+                         fac2 = fac2 + hku(nm ,k) * dqgrdu(nm ,k)
+                         !
+                      enddo
                       !
-                      amatw(nm,k,1) = amatw(nm,k,1) + apoks(nm,k) + bpoks(nm,k) * utot
+                      rhs(nm) = rhs(nm) + dt * dt * theta3 * ( tetau(nm) * guu(nm) * fac2 - tetau(nmd) * guu(nmd) * fac1 )
                       !
-                      amatw(nm,k,1) = amatw(nm,k,1) + cpoks(nm,k) / (dt*thetaw)
-                      rhsw (nm,k  ) = rhsw (nm,k  ) + cpoks(nm,k) * w0(nm,k) / (dt*thetaw)
+                      fac1 = 0.
+                      fac2 = 0.
+                      !
+                      do k = 1, kmax
+                         !
+                         fac1 = fac1 + hkv(ndm,k) * dqgrdv(ndm,k)
+                         fac2 = fac2 + hkv(nm ,k) * dqgrdv(nm ,k)
+                         !
+                      enddo
+                      !
+                      rhs(nm) = rhs(nm) + dt * dt * theta3 * ( tetav(nm) * gvv(nm) * fac2 - tetav(ndm) * gvv(ndm) * fac1 )
                       !
                    endif
                    !
                 enddo
              enddo
              !
+          endif
+          !
+          do n = nfu, nl
+             !
+             nmf  = kgrpnt(mf ,n)
+             nmfu = kgrpnt(mfu,n)
+             nml  = kgrpnt(ml ,n)
+             nmlu = kgrpnt(mlu,n)
+             !
+             if ( slimp(n) ) then
+                !
+                ds  (nmf   ) = s1(nmf) - s0(nmf)
+                rhs (nmfu  ) = rhs(nmfu) - amat(nmfu,2)*ds(nmf)
+                amat(nmfu,2) = 0.
+                !
+             endif
+             !
+             if ( srimp(n) ) then
+                !
+                ds  (nmlu ) = s1(nmlu) - s0(nmlu)
+                rhs (nml  ) = rhs(nml) - amat(nml,3)*ds(nmlu)
+                amat(nml,3) = 0.
+                !
+             endif
+             !
           enddo
+          !
+          do m = mfu, ml
+             !
+             nfm  = kgrpnt(m,nf )
+             nfum = kgrpnt(m,nfu)
+             nlm  = kgrpnt(m,nl )
+             nlum = kgrpnt(m,nlu)
+             !
+             if ( sbimp(m) ) then
+                !
+                ds  (nfm   ) = s1(nfm) - s0(nfm)
+                rhs (nfum  ) = rhs(nfum) - amat(nfum,4)*ds(nfm)
+                amat(nfum,4) = 0.
+                !
+             endif
+             !
+             if ( stimp(m) ) then
+                !
+                ds  (nlum ) = s1(nlum) - s0(nlum)
+                rhs (nlm  ) = rhs(nlm) - amat(nlm,5)*ds(nlum)
+                amat(nlm,5) = 0.
+                !
+             endif
+             !
+          enddo
+          !
+          ! next, solve the equation for water level correction
+          !
+          call pcg( amat, rhs, ds )
+          if (STPNOW()) return
+          !
+       else
+          !
+          lon = -dps  - s0
+          upn = -flos - s0
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                md = m - 1
+                mu = m + 1
+                nd = n - 1
+                nu = n + 1
+                !
+                nm  = kgrpnt(m ,n )
+                nmd = kgrpnt(md,n )
+                nmu = kgrpnt(mu,n )
+                ndm = kgrpnt(m ,nd)
+                num = kgrpnt(m ,nu)
+                !
+                ! for permanently dry neighbours, corresponding values will be mirrored
+                !
+                if ( nmd == 1 ) nmd = nm
+                if ( nmu == 1 ) nmu = nm
+                if ( ndm == 1 ) ndm = nm
+                if ( num == 1 ) num = nm
+                !
+                if ( presp(nm) == 1 ) then
+                   !
+                   fac1 = pship(1)
+                   !
+                else
+                   !
+                   fac1 = 0.
+                   !
+                endif
+                !
+                if ( m /= mfu .or. slimp(n) .or. .not.LMXF ) then
+                   !
+                   amatn(nm,2) = -fac * tetau(nmd) * guu(nmd) * hu(nmd) / gvu(nmd)
+                   !
+                else
+                   !
+                   amatn(nm,2) = 0.
+                   !
+                endif
+                !
+                if ( m /= ml .or. srimp(n) .or. .not.LMXL ) then
+                   !
+                   amatn(nm,3) = -fac * tetau(nm) * guu(nm) * hu(nm) / gvu(nm)
+                   !
+                else
+                   !
+                   amatn(nm,3) = 0.
+                   !
+                endif
+                !
+                if ( n /= nfu .or. sbimp(m) .or. .not.LMYF ) then
+                   !
+                   amatn(nm,4) = -fac * tetav(ndm) * gvv(ndm) * hv(ndm) / guv(ndm)
+                   !
+                else
+                   !
+                   amatn(nm,4) = 0.
+                   !
+                endif
+                !
+                if ( n /= nl .or. stimp(m) .or. .not.LMYL ) then
+                   !
+                   amatn(nm,5) = -fac * tetav(nm) * gvv(nm) * hv(nm) / guv(nm)
+                   !
+                else
+                   !
+                   amatn(nm,5) = 0.
+                   !
+                endif
+                !
+                amatn(nm,1) = fac1 * gsqs(nm) - teta2(nm) * ( amatn(nm,2) + amatn(nm,3) + amatn(nm,4) + amatn(nm,5) )
+                amatn(nm,2) = teta2(nmd) * amatn(nm,2)
+                amatn(nm,3) = teta2(nmu) * amatn(nm,3)
+                amatn(nm,4) = teta2(ndm) * amatn(nm,4)
+                amatn(nm,5) = teta2(num) * amatn(nm,5)
+                !
+                fac1 = 0.
+                fac2 = 0.
+                !
+                do k = 1, kmax
+                   !
+                   fac1 = fac1 + hku(nmd,k)* ( tetau(nmd)*ui(nmd,k) + (1.-tetau(nmd))*u0(nmd,k) )
+                   fac2 = fac2 + hku(nm ,k)* ( tetau(nm )*ui(nm ,k) + (1.-tetau(nm ))*u0(nm ,k) )
+                   !
+                enddo
+                !
+                rhsn(nm) = dt * ( guu(nmd) * fac1 - guu(nm) * fac2 )
+                !
+                fac1 = 0.
+                fac2 = 0.
+                !
+                do k = 1, kmax
+                   !
+                   fac1 = fac1 + hkv(ndm,k)* ( tetav(ndm)*vi(ndm,k) + (1.-tetav(ndm))*v0(ndm,k) )
+                   fac2 = fac2 + hkv(nm ,k)* ( tetav(nm )*vi(nm ,k) + (1.-tetav(nm ))*v0(nm ,k) )
+                   !
+                enddo
+                !
+                rhsn(nm) = rhsn(nm) + dt * ( gvv(ndm) * fac1 - gvv(nm) * fac2 )
+                !
+                amatn(nm,:) = amatn(nm,:) / gsqs(nm)
+                rhsn (nm  ) = rhsn (nm  ) / gsqs(nm)
+                !
+                rhsn(nm) = rhsn(nm) + max( lon(nm), min( upn(nm), 0.) )
+                !
+             enddo
+          enddo
+          !
+          ! add non-hydrostatic pressure part in the equation for water level correction (not piezometric head), if appropriate
+          !
+          if ( lpproj ) then
+             !
+             do n = nfu, nl
+                do m = mfu, ml
+                   !
+                   md = m - 1
+                   nd = n - 1
+                   !
+                   nm  = kgrpnt(m ,n )
+                   nmd = kgrpnt(md,n )
+                   ndm = kgrpnt(m ,nd)
+                   !
+                   if ( presp(nm) == 0 ) then
+                      !
+                      fac1 = 0.
+                      fac2 = 0.
+                      !
+                      do k = 1, kmax
+                         !
+                         fac1 = fac1 + hku(nmd,k) * dqgrdu(nmd,k)
+                         fac2 = fac2 + hku(nm ,k) * dqgrdu(nm ,k)
+                         !
+                      enddo
+                      !
+                      rhsn(nm) = rhsn(nm) + dt * dt * theta3 * ( tetau(nm) * guu(nm) * fac2 - tetau(nmd) * guu(nmd) * fac1 )
+                      !
+                      fac1 = 0.
+                      fac2 = 0.
+                      !
+                      do k = 1, kmax
+                         !
+                         fac1 = fac1 + hkv(ndm,k) * dqgrdv(ndm,k)
+                         fac2 = fac2 + hkv(nm ,k) * dqgrdv(nm ,k)
+                         !
+                      enddo
+                      !
+                      rhsn(nm) = rhsn(nm) + dt * dt * theta3 * ( tetav(nm) * gvv(nm) * fac2 - tetav(ndm) * gvv(ndm) * fac1 )
+                      rhsn(nm) = rhsn(nm) / gsqs(nm)
+                      !
+                   endif
+                   !
+                enddo
+             enddo
+             !
+          endif
+          !
+          do n = nfu, nl
+             !
+             nmf  = kgrpnt(mf ,n)
+             nmfu = kgrpnt(mfu,n)
+             nml  = kgrpnt(ml ,n)
+             nmlu = kgrpnt(mlu,n)
+             !
+             if ( slimp(n) ) then
+                !
+                ds   (nmf   ) = s1(nmf) - s0(nmf)
+                rhsn (nmfu  ) = rhsn(nmfu) - amatn(nmfu,2)*ds(nmf)
+                amatn(nmfu,2) = 0.
+                !
+             endif
+             !
+             if ( srimp(n) ) then
+                !
+                ds   (nmlu ) = s1(nmlu) - s0(nmlu)
+                rhsn (nml  ) = rhsn(nml) - amatn(nml,3)*ds(nmlu)
+                amatn(nml,3) = 0.
+                !
+             endif
+             !
+          enddo
+          !
+          do m = mfu, ml
+             !
+             nfm  = kgrpnt(m,nf )
+             nfum = kgrpnt(m,nfu)
+             nlm  = kgrpnt(m,nl )
+             nlum = kgrpnt(m,nlu)
+             !
+             if ( sbimp(m) ) then
+                !
+                ds   (nfm   ) = s1(nfm) - s0(nfm)
+                rhsn (nfum  ) = rhsn(nfum) - amatn(nfum,4)*ds(nfm)
+                amatn(nfum,4) = 0.
+                !
+             endif
+             !
+             if ( stimp(m) ) then
+                !
+                ds   (nlum ) = s1(nlum) - s0(nlum)
+                rhsn (nlm  ) = rhsn(nlm) - amatn(nlm,5)*ds(nlum)
+                amatn(nlm,5) = 0.
+                !
+             endif
+             !
+          enddo
+          !
+          ! next, solve the equation for water level correction
+          !
+          call newton2D ( amatn, rhsn, lon, upn, ds )
+          if (STPNOW()) return
           !
        endif
        !
-    endif
-    !
-    ! solve the w-momentum equation
-    !
-    if ( ihydro == 1 .or. ihydro == 2 ) then
+       ! set to zero for permanently dry points
+       !
+       ds(1) = 0.
+       !
+       ! exchange water level corrections with neighbouring subdomains
+       !
+       call SWEXCHG ( ds, kgrpnt, 1, 1 )
+       if (STPNOW()) return
+       !
+       ! synchronize water level correction at appropriate boundaries in case of repeating grid
+       !
+       call periodic ( ds, kgrpnt, 1, 1 )
+       !
+       ! determine maximum error to check convergence projection pressure method
+       !
+       do m = mfu, ml
+          do n = nfu, nl
+             !
+             nm = kgrpnt(m,n)
+             !
+             res = abs(s0(nm)+ds(nm) - s1(nm))
+             if ( res > resm ) then
+                resm = res
+                minf = m
+                ninf = n
+             endif
+             !
+          enddo
+       enddo
+       !
+       rval = resm
+       call SWREDUCE ( resm, 1, SWREAL, SWMAX )
+       !
+       if ( ITEST >= 30 .and. EQREAL(resm,rval) .and. maxit > 1 ) then
+          !
+          write (PRINTF,'(a,i4,a,e12.6,a,i5,a,i5,a)') ' ++ pressure projection: iter = ',jj,' res = ',resm,' in (m,n)=(',minf+MXF-2,',',ninf+MYF-2,')'
+          !
+       endif
+       !
+       ! correct horizontal velocities
+       !
+       do k = 1, kmax
+          !
+          do n = nfu, nl
+             do m = msta(n), mend(n)
+                !
+                mu = m + 1
+                !
+                nm  = kgrpnt(m ,n)
+                nmu = kgrpnt(mu,n)
+                !
+                if ( wetu(nm) == 1 .and. nmu /= 1 ) then
+                   !
+                   u1(nm,k) = ui(nm,k) - grav * dt * ( teta2(nmu) * ds(nmu) - teta2(nm) * ds(nm) ) / gvu(nm)
+                   !
+                endif
+                !
+             enddo
+          enddo
+          !
+          do m = mfu, ml
+             do n = nsta(m), nend(m)
+                !
+                nu = n + 1
+                !
+                nm  = kgrpnt(m,n )
+                num = kgrpnt(m,nu)
+                !
+                if ( wetv(nm) == 1 .and. num /= 1 ) then
+                   !
+                   v1(nm,k) = vi(nm,k) - grav * dt * ( teta2(num) * ds(num) - teta2(nm) * ds(nm) ) / guv(nm)
+                   !
+                endif
+                !
+             enddo
+          enddo
+          !
+       enddo
+       !
+       ! exchange velocities with neighbouring subdomains
+       !
+       call SWEXCHG ( u1, kgrpnt, 1, kmax )
+       if (STPNOW()) return
+       !
+       call SWEXCHG ( v1, kgrpnt, 1, kmax )
+       if (STPNOW()) return
+       !
+       ! synchronize velocities at appropriate boundaries in case of repeating grid
+       !
+       call periodic ( u1, kgrpnt, 1, kmax )
+       call periodic ( v1, kgrpnt, 1, kmax )
+       !
+       ! update water level
        !
        do n = nfu, nl
           do m = mfu, ml
              !
              nm = kgrpnt(m,n)
              !
-             bi = 1./amatw(nm,0,1)
-             !
-             amatw(nm,0,1) = bi
-             amatw(nm,0,3) = amatw(nm,0,3)*bi
-             rhsw (nm,0  ) = rhsw (nm,0  )*bi
-             !
-             do k = 1, kmax
-                !
-                bi = 1./(amatw(nm,k,1) - amatw(nm,k,2)*amatw(nm,k-1,3))
-                amatw(nm,k,1) = bi
-                amatw(nm,k,3) = amatw(nm,k,3)*bi
-                rhsw (nm,k  ) = (rhsw(nm,k) - amatw(nm,k,2)*rhsw(nm,k-1))*bi
-                !
-             enddo
-             !
-             w1(nm,kmax) = rhsw(nm,kmax)
-             do k = kmax-1, 0, -1
-                w1(nm,k) = rhsw(nm,k) - amatw(nm,k,3)*w1(nm,k+1)
-             enddo
+             s1(nm) = s0(nm) + ds(nm)
              !
           enddo
        enddo
        !
-       ! re-update the solution in case of thetaw <> 1
+       ! copy to virtual cells at boundaries except for both water level and Riemann invariant openings
        !
-       if ( thetaw /= 1. ) then
+       if ( .not.lreptx ) then
+          !
+          do n = nfu, nl
+             !
+             nmf  = kgrpnt(mf ,n)
+             nmfu = kgrpnt(mfu,n)
+             nml  = kgrpnt(ml ,n)
+             nmlu = kgrpnt(mlu,n)
+             !
+             if ( ibl(n) /= 2 .and. ibl(n) /= 6 .and. LMXF ) s1(nmf ) = s1(nmfu)
+             if ( ibr(n) /= 2 .and. ibr(n) /= 6 .and. LMXL ) s1(nmlu) = s1(nml )
+             !
+          enddo
+          !
+       endif
+       !
+       if ( .not.lrepty ) then
+          !
+          do m = mfu, ml
+             !
+             nfm  = kgrpnt(m,nf )
+             nfum = kgrpnt(m,nfu)
+             nlm  = kgrpnt(m,nl )
+             nlum = kgrpnt(m,nlu)
+             !
+             if ( ibb(m) /= 2 .and. ibb(m) /= 6 .and. LMYF ) s1(nfm ) = s1(nfum)
+             if ( ibt(m) /= 2 .and. ibt(m) /= 6 .and. LMYL ) s1(nlum) = s1(nlm )
+             !
+          enddo
+          !
+       endif
+       !
+       ! in case of outflow condition, no change in water depth
+       !
+       do n = nfu, nl
+          !
+          nmf   = kgrpnt(mf   ,n)
+          nmfu  = kgrpnt(mfu  ,n)
+          nmfuu = kgrpnt(mfu+1,n)
+          nml   = kgrpnt(ml   ,n)
+          nmld  = kgrpnt(ml-1 ,n)
+          nmlu  = kgrpnt(mlu  ,n)
+          !
+          if ( ibl(n) == 10 ) s1(nmf ) = s1(nmfu) - dps(nmfu) + dps(nmfuu)
+          if ( ibr(n) == 10 ) s1(nmlu) = s1(nml ) - dps(nml ) + dps(nmld )
+          !
+       enddo
+       !
+       do m = mfu, ml
+          !
+          nfm   = kgrpnt(m,nf   )
+          nfum  = kgrpnt(m,nfu  )
+          nfuum = kgrpnt(m,nfu+1)
+          nlm   = kgrpnt(m,nl   )
+          nldm  = kgrpnt(m,nl-1 )
+          nlum  = kgrpnt(m,nlu  )
+          !
+          if ( ibb(m) == 10 ) s1(nfm ) = s1(nfum) - dps(nfum) + dps(nfuum)
+          if ( ibt(m) == 10 ) s1(nlum) = s1(nlm ) - dps(nlm ) + dps(nldm )
+          !
+       enddo
+       !
+       ! build the w-momentum equation
+       !
+       if ( ihydro == 1 .or. ihydro == 2 ) then
+          !
+          ! initialize system of equations in dry points
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                nm = kgrpnt(m,n)
+                !
+                if ( wets(nm) /= 1 ) then
+                   !
+                   amatw(nm,:,1) = 1.
+                   amatw(nm,:,2) = 0.
+                   amatw(nm,:,3) = 0.
+                   rhsw (nm,:  ) = 0.
+                   !
+                endif
+                !
+             enddo
+          enddo
+          !
+          ! bottom:
+          !
+          ! the kinematic condition is imposed
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                md = m - 1
+                nd = n - 1
+                !
+                nm  = kgrpnt(m ,n )
+                nmd = kgrpnt(md,n )
+                ndm = kgrpnt(m ,nd)
+                !
+                ! for permanently dry neighbours, corresponding values will be mirrored
+                !
+                if ( nmd == 1 ) nmd = nm
+                if ( ndm == 1 ) ndm = nm
+                !
+                if ( wets(nm) == 1 ) then
+                   !
+                   dxl = 0.5 * ( gvv(nm) + gvv(ndm) )
+                   dyl = 0.5 * ( guu(nm) + guu(nmd) )
+                   !
+                   amatw(nm,kmax,1) = 1.
+                   amatw(nm,kmax,2) = 0.
+                   amatw(nm,kmax,3) = 0.
+                   w1   (nm,kmax  ) = 0.25 * ( 3.*(u1(nm,kmax)+u1(nmd,kmax)) - u1(nm,kmax-1) - u1(nmd,kmax-1) ) * ( zku(nm,kmax) - zku(nmd,kmax) ) / dxl +  &
+                                      0.25 * ( 3.*(v1(nm,kmax)+v1(ndm,kmax)) - v1(nm,kmax-1) - v1(ndm,kmax-1) ) * ( zkv(nm,kmax) - zkv(ndm,kmax) ) / dyl
+                   rhsw (nm,kmax  ) = w1(nm,kmax)
+                   !
+                endif
+                !
+             enddo
+          enddo
+          !
+          ! free surface and interior part:
+          !
+          ! compute the time derivative
           !
           do k = 0, kmax-1
              !
@@ -4467,7 +4476,1144 @@ subroutine SwashImpLay2DHflow
                    !
                    if ( wets(nm) == 1 ) then
                       !
-                      w1(nm,k) = ( w1(nm,k) - (1.-thetaw) * w0(nm,k) ) / thetaw
+                      amatw(nm,k,1) = 1. / (dt*thetaw)
+                      rhsw (nm,k  ) = w0(nm,k) / (dt*thetaw)
+                      !
+                   endif
+                   !
+                enddo
+             enddo
+             !
+          enddo
+          !
+          if ( horwinc ) then
+             !
+             ! compute horizontal advection terms (momentum conservative and explicit)
+             !
+             propsc = nint(pnums(16))
+             kappa  = pnums(17)
+             mbound = pnums(18)
+             phieby = pnums(19)
+             !
+             do k = 0, kmax-1
+                !
+                kd = max(k,1)
+                !
+                do n = nfu, nl
+                   do m = mfu, ml
+                      !
+                      md  = m  - 1
+                      mdd = md - 1
+                      mu  = m  + 1
+                      muu = mu + 1
+                      !
+                      if (                   LMXF .and. mdd < mf  ) mdd = mf
+                      if ( .not.lreptx .and. LMXL .and. muu > ml  ) muu = ml
+                      if (      lreptx .and. LMXL .and. muu > mlu ) muu = mlu
+                      !
+                      nd  = n  - 1
+                      ndd = nd - 1
+                      nu  = n  + 1
+                      nuu = nu + 1
+                      !
+                      if (                   LMYF .and. ndd < nf  ) ndd = nf
+                      if ( .not.lrepty .and. LMYL .and. nuu > nl  ) nuu = nl
+                      if (      lrepty .and. LMYL .and. nuu > nlu ) nuu = nlu
+                      !
+                      nm   = kgrpnt(m  ,n  )
+                      nmd  = kgrpnt(md ,n  )
+                      nmdd = kgrpnt(mdd,n  )
+                      nmu  = kgrpnt(mu ,n  )
+                      nmuu = kgrpnt(muu,n  )
+                      ndm  = kgrpnt(m  ,nd )
+                      nddm = kgrpnt(m  ,ndd)
+                      num  = kgrpnt(m  ,nu )
+                      nuum = kgrpnt(m  ,nuu)
+                      !
+                      ! for permanently dry neighbours, corresponding values will be mirrored
+                      !
+                      if ( nmd  == 1 ) nmd  = nm
+                      if ( nmdd == 1 ) nmdd = nmd
+                      if ( nmu  == 1 ) nmu  = nm
+                      if ( nmuu == 1 ) nmuu = nmu
+                      if ( ndm  == 1 ) ndm  = nm
+                      if ( nddm == 1 ) nddm = ndm
+                      if ( num  == 1 ) num  = nm
+                      if ( nuum == 1 ) nuum = num
+                      !
+                      if ( wets(nm) == 1 ) then
+                         !
+                         ! advection term in x-direction
+                         !
+                         fac = 0.5 * gsqs(nm) * ( hks(nm,kd) + hks(nm,k+1) )
+                         !
+                         if ( uwetp(nmd) == 1 ) then
+                            fac1 = guu(nmd) * ( qx(nmd,k+1)*hku(nmd,kd) + qx(nmd,kd)*hku(nmd,k+1) ) / ( fac*( hku(nmd,kd) + hku(nmd,k+1) ) )
+                         else
+                            fac1 = 0.
+                         endif
+                         if ( uwetp(nm) == 1 ) then
+                            fac2 = guu(nm ) * ( qx(nm ,k+1)*hku(nm ,kd) + qx(nm ,kd)*hku(nm ,k+1) ) / ( fac*( hku(nm ,kd) + hku(nm ,k+1) ) )
+                         else
+                            fac2 = 0.
+                         endif
+                         !
+                         if ( propsc == 3 .and. kappa == 1. ) then
+                            !
+                            ! central differences
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) - 0.5 * ( fac1 * (w0(nm,k) - w0(nmd,k)) + fac2 * (w0(nmu,k) - w0(nm,k)) )
+                            !
+                         else
+                            !
+                            ! first order upwind scheme
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) - ( max(fac1,0.) * (w0(nm,k) - w0(nmd,k)) + min(fac2,0.) * (w0(nmu,k) - w0(nm,k)) )
+                            !
+                            ! add higher order (flux-limited) correction, if appropriate
+                            !
+                            if ( propsc /= 1 ) then
+                               !
+                               if ( fac2 > 0. ) then
+                                  !
+                                  grad1 = w0(nmu,k) - w0(nm ,k)
+                                  grad2 = w0(nm ,k) - w0(nmd,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac2 * fluxlim(grad1,grad2)
+                                  !
+                               else if ( fac2 < 0. ) then
+                                  !
+                                  grad1 = w0(nmu ,k) - w0(nm ,k)
+                                  grad2 = w0(nmuu,k) - w0(nmu,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac2 * fluxlim(grad1,grad2)
+                                  !
+                               endif
+                               !
+                               if ( fac1 > 0. ) then
+                                  !
+                                  grad1 = w0(nm ,k) - w0(nmd ,k)
+                                  grad2 = w0(nmd,k) - w0(nmdd,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac1 * fluxlim(grad1,grad2)
+                                  !
+                               else if ( fac1 < 0. ) then
+                                  !
+                                  grad1 = w0(nm ,k) - w0(nmd,k)
+                                  grad2 = w0(nmu,k) - w0(nm ,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac1 * fluxlim(grad1,grad2)
+                                  !
+                               endif
+                               !
+                            endif
+                            !
+                         endif
+                         !
+                         ! advection term in y-direction
+                         !
+                         if ( vwetp(ndm) == 1 ) then
+                            fac1 = gvv(ndm) * ( qy(ndm,k+1)*hkv(ndm,kd) + qy(ndm,kd)*hkv(ndm,k+1) ) / ( fac*( hkv(ndm,kd) + hkv(ndm,k+1) ) )
+                         else
+                            fac1 = 0.
+                         endif
+                         if ( vwetp(nm) == 1 ) then
+                            fac2 = gvv(nm ) * ( qy(nm ,k+1)*hkv(nm ,kd) + qy(nm ,kd)*hkv(nm ,k+1) ) / ( fac*( hkv(nm ,kd) + hkv(nm ,k+1) ) )
+                         else
+                            fac2 = 0.
+                         endif
+                         !
+                         if ( propsc == 3 .and. kappa == 1. ) then
+                            !
+                            ! central differences
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) - 0.5 * ( fac1 * (w0(nm,k) - w0(ndm,k)) + fac2 * (w0(num,k) - w0(nm,k)) )
+                            !
+                         else
+                            !
+                            ! first order upwind scheme
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) - ( max(fac1,0.) * (w0(nm,k) - w0(ndm,k)) + min(fac2,0.) * (w0(num,k) - w0(nm,k)) )
+                            !
+                            ! add higher order (flux-limited) correction, if appropriate
+                            !
+                            if ( propsc /= 1 ) then
+                               !
+                               if ( fac2 > 0. ) then
+                                  !
+                                  grad1 = w0(num,k) - w0(nm ,k)
+                                  grad2 = w0(nm ,k) - w0(ndm,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac2 * fluxlim(grad1,grad2)
+                                  !
+                               else if ( fac2 < 0. ) then
+                                  !
+                                  grad1 = w0(num ,k) - w0(nm ,k)
+                                  grad2 = w0(nuum,k) - w0(num,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac2 * fluxlim(grad1,grad2)
+                                  !
+                               endif
+                               !
+                               if ( fac1 > 0. ) then
+                                  !
+                                  grad1 = w0(nm ,k) - w0(ndm ,k)
+                                  grad2 = w0(ndm,k) - w0(nddm,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) + 0.5 * fac1 * fluxlim(grad1,grad2)
+                                  !
+                               else if ( fac1 < 0. ) then
+                                  !
+                                  grad1 = w0(nm ,k) - w0(ndm,k)
+                                  grad2 = w0(num,k) - w0(nm ,k)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) - 0.5 * fac1 * fluxlim(grad1,grad2)
+                                  !
+                               endif
+                               !
+                            endif
+                            !
+                         endif
+                         !
+                      endif
+                      !
+                   enddo
+                enddo
+                !
+             enddo
+             !
+             ! compute horizontal viscosity term
+             !
+             if ( ihvisc == 1 .and. hvisc > 0. ) then
+                !
+                do k = 0, kmax-1
+                   !
+                   kd = max(k,1)
+                   !
+                   do n = nfu, nl
+                      do m = mfu, ml
+                         !
+                         md = m - 1
+                         mu = m + 1
+                         nd = n - 1
+                         nu = n + 1
+                         !
+                         nm  = kgrpnt(m ,n )
+                         nmd = kgrpnt(md,n )
+                         nmu = kgrpnt(mu,n )
+                         ndm = kgrpnt(m ,nd)
+                         num = kgrpnt(m ,nu)
+                         !
+                         ! for permanently dry neighbours, corresponding values will be mirrored
+                         !
+                         if ( nmd == 1 ) nmd = nm
+                         if ( nmu == 1 ) nmu = nm
+                         if ( ndm == 1 ) ndm = nm
+                         if ( num == 1 ) num = nm
+                         !
+                         ! viscosity term in x-direction
+                         !
+                         if ( wets(nm) * wets(nmd) * wets(nmu) == 1 ) then
+                            !
+                            fac = 0.25 * ( gvv(nm) + gvv(ndm) ) * ( hks(nm,kd) + hks(nm,k+1) )
+                            !
+                            fac1 = 0.5 * hvisc * guu(nm ) * ( hkum(nm ,kd) + hkum(nm ,k+1) ) / gvu(nm )
+                            !
+                            fac2 = 0.5 * hvisc * guu(nmd) * ( hkum(nmd,kd) + hkum(nmd,k+1) ) / gvu(nmd)
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(nmu,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(nmd,k)) ) / fac
+                            !
+                         endif
+                         !
+                         ! viscosity term in y-direction
+                         !
+                         if ( wets(nm) * wets(ndm) * wets(num) == 1 ) then
+                            !
+                            fac = 0.25 * ( guu(nm) + guu(nmd) ) * ( hks(nm,kd) + hks(nm,k+1) )
+                            !
+                            fac1 = 0.5 * hvisc * gvv(nm ) * ( hkvm(nm ,kd) + hkvm(nm ,k+1) ) / guv(nm )
+                            !
+                            fac2 = 0.5 * hvisc * gvv(ndm) * ( hkvm(ndm,kd) + hkvm(ndm,k+1) ) / guv(ndm)
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(num,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(ndm,k)) ) / fac
+                            !
+                         endif
+                         !
+                      enddo
+                   enddo
+                   !
+                enddo
+                !
+             else if ( ihvisc > 1 ) then
+                !
+                do k = 0, kmax-1
+                   !
+                   kd = max(k,1)
+                   !
+                   do n = nfu, nl
+                      do m = mfu, ml
+                         !
+                         md = m - 1
+                         mu = m + 1
+                         nd = n - 1
+                         nu = n + 1
+                         !
+                         nm   = kgrpnt(m ,n )
+                         nmd  = kgrpnt(md,n )
+                         nmu  = kgrpnt(mu,n )
+                         ndm  = kgrpnt(m ,nd)
+                         num  = kgrpnt(m ,nu)
+                         ndmd = kgrpnt(md,nd)
+                         !
+                         ! for permanently dry neighbours, corresponding values will be mirrored
+                         !
+                         if ( nmd  == 1 ) nmd  = nm
+                         if ( nmu  == 1 ) nmu  = nm
+                         if ( ndm  == 1 ) ndm  = nm
+                         if ( num  == 1 ) num  = nm
+                         if ( ndmd == 1 ) ndmd = ndm
+                         !
+                         ! viscosity term in x-direction
+                         !
+                         if ( wets(nm) * wets(nmd) * wets(nmu) == 1 ) then
+                            !
+                            fac = 0.25 * ( gvv(nm) + gvv(ndm) ) * ( hks(nm,kd) + hks(nm,k+1) )
+                            !
+                            fac1 = 0.25 * ( vnu2d(nm ) + vnu2d(ndm ) ) * guu(nm ) * ( hkum(nm ,kd) + hkum(nm ,k+1) ) / gvu(nm )
+                            !
+                            fac2 = 0.25 * ( vnu2d(nmd) + vnu2d(ndmd) ) * guu(nmd) * ( hkum(nmd,kd) + hkum(nmd,k+1) ) / gvu(nmd)
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(nmu,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(nmd,k)) ) / fac
+                            !
+                         endif
+                         !
+                         ! viscosity term in y-direction
+                         !
+                         if ( wets(nm) * wets(ndm) * wets(num) == 1 ) then
+                            !
+                            fac = 0.25 * ( guu(nm) + guu(nmd) ) * ( hks(nm,kd) + hks(nm,k+1) )
+                            !
+                            fac1 = 0.25 * ( vnu2d(nm ) + vnu2d(nmd ) ) * gvv(nm ) * ( hkvm(nm ,kd) + hkvm(nm ,k+1) ) / guv(nm )
+                            !
+                            fac2 = 0.25 * ( vnu2d(ndm) + vnu2d(ndmd) ) * gvv(ndm) * ( hkvm(ndm,kd) + hkvm(ndm,k+1) ) / guv(ndm)
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) + ( fac1 * (w0(num,k) - w0(nm,k)) - fac2 * (w0(nm,k) - w0(ndm,k)) ) / fac
+                            !
+                         endif
+                         !
+                      enddo
+                   enddo
+                   !
+                enddo
+                !
+             endif
+             !
+          endif
+          !
+          if ( verwinc ) then
+             !
+             ! compute vertical terms (implicit)
+             !
+             propsc = nint(pnums(41))
+             kappa  = pnums(42)
+             mbound = pnums(43)
+             phieby = pnums(44)
+             !
+             do k = 0, kmax-1
+                !
+                kd  = max(k  ,1   )
+                kdd = max(k-1,1   )
+                kuu = min(k+2,kmax)
+                !
+                do n = nfu, nl
+                   do m = mfu, ml
+                      !
+                      nm = kgrpnt(m,n)
+                      !
+                      if ( wets(nm) == 1 ) then
+                         !
+                         ! advection term
+                         !
+                         ctrkt = ( wom(nm,kd-1) + wom(nm,kd  ) ) / ( hks(nm,kd) + hks(nm,k+1) )
+                         ctrkb = ( wom(nm,k   ) + wom(nm,k +1) ) / ( hks(nm,kd) + hks(nm,k+1) )
+                         !
+                         if ( k == 0 ) ctrkt = 0.
+                         !
+                         if ( propsc == 3 .and. kappa == 1. ) then
+                            !
+                            ! central differences
+                            !
+                            amatw(nm,k,1) = amatw(nm,k,1) - 0.5*ctrkt + 0.5*ctrkb
+                            amatw(nm,k,2) =  0.5*ctrkt
+                            amatw(nm,k,3) = -0.5*ctrkb
+                            !
+                         else
+                            !
+                            ! first order upwind scheme
+                            !
+                            amatw(nm,k,1) = amatw(nm,k,1) - ctrkt + ctrkb + max(ctrkt,0.) - min(ctrkb,0.)
+                            amatw(nm,k,2) =  min(ctrkt,0.)
+                            amatw(nm,k,3) = -max(ctrkb,0.)
+                            !
+                            ! add higher order (flux-limited) correction, if appropriate
+                            !
+                            if ( propsc /= 1 ) then
+                               !
+                               if ( ctrkt > 0. ) then
+                                  !
+                                  grad1 = w0(nm,kd-1) - w0(nm,k  )
+                                  grad2 = w0(nm,k   ) - w0(nm,k+1)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) - 0.5 * ctrkt * fluxlim(grad1,grad2)
+                                  !
+                               else if ( ctrkt < 0. ) then
+                                  !
+                                  grad1 = w0(nm,kd -1) - w0(nm,k   )
+                                  grad2 = w0(nm,kdd-1) - w0(nm,kd-1)
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) + 0.5 * ctrkt * fluxlim(grad1,grad2)
+                                  !
+                               endif
+                               !
+                               if ( ctrkb > 0. ) then
+                                  !
+                                  grad1 = w0(nm,k  ) - w0(nm,k  +1)
+                                  grad2 = w0(nm,k+1) - w0(nm,kuu  )
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) + 0.5 * ctrkb * fluxlim(grad1,grad2)
+                                  !
+                               else if ( ctrkb < 0. ) then
+                                  !
+                                  grad1 = w0(nm,k   ) - w0(nm,k+1)
+                                  grad2 = w0(nm,kd-1) - w0(nm,k  )
+                                  !
+                                  rhsw(nm,k) = rhsw(nm,k) - 0.5 * ctrkb * fluxlim(grad1,grad2)
+                                  !
+                               endif
+                               !
+                            endif
+                            !
+                         endif
+                         !
+                         ! viscosity term
+                         !
+                         ctrkt = ( vnu3d(nm,kd-1) + vnu3d(nm,kd  ) ) / ( hks(nm,kd  )*( hks(nm,kd) + hks(nm,k+1) ) )
+                         ctrkb = ( vnu3d(nm,k   ) + vnu3d(nm,k +1) ) / ( hks(nm,k +1)*( hks(nm,kd) + hks(nm,k+1) ) )
+                         !
+                         if ( k == 0 ) ctrkt = 0.
+                         !
+                         amatw(nm,k,1) = amatw(nm,k,1) + ctrkt + ctrkb
+                         amatw(nm,k,2) = amatw(nm,k,2) - ctrkt
+                         amatw(nm,k,3) = amatw(nm,k,3) - ctrkb
+                         !
+                      endif
+                      !
+                   enddo
+                enddo
+                !
+             enddo
+             !
+          endif
+          !
+          ! build gradient matrix for non-hydrostatic pressure
+          !
+          if ( ihydro == 1 ) then
+             !
+             ! Keller-box scheme, so non-hydrostatic pressure is located at the centers of layer interfaces
+             !
+             do n = nfu, nl
+                do m = mfu, ml
+                   !
+                   nm = kgrpnt(m,n)
+                   !
+                   if ( wets(nm) == 1 ) then
+                      !
+                      if ( presp(nm) == 0 ) then
+                         !
+                         ! free surface flow
+                         !
+                         gmatw(nm,:,1) =  2./hks(nm,:)
+                         gmatw(nm,:,2) = -gmatw(nm,:,1)
+                         !
+                         do k = 2, kmax
+                            !
+                            fac = 1.
+                            !
+                            do j = 1, kmax-k+1
+                               !
+                               fac = -fac
+                               !
+                               gmatw(nm,k-1,2*j+1) =  2.*fac/hks(nm,j+k-1)
+                               gmatw(nm,k-1,2*j+2) = -gmatw(nm,k-1,2*j+1)
+                               !
+                            enddo
+                            !
+                         enddo
+                         !
+                      else
+                         !
+                         ! pressurized flow
+                         !
+                         do k = 1, kmax
+                            !
+                            kd = max(k-1,1)
+                            !
+                            gmatw(nm,k,1) =  2./(hks(nm,kd) + hks(nm,k))
+                            gmatw(nm,k,2) = -gmatw(nm,k,1)
+                            !
+                         enddo
+                         !
+                      endif
+                      !
+                   else
+                      !
+                      gmatw(nm,:,:) = 0.
+                      !
+                   endif
+                   !
+                   gmatw(nm,1,1) = 0.
+                   !
+                enddo
+             enddo
+             !
+             ! to reduce the pressure Poisson equation set pressure of bottom face to that of top face for a number of layers
+             !
+             do l = 1, qlay
+                !
+                do n = nfu, nl
+                   do m = mfu, ml
+                      !
+                      nm = kgrpnt(m,n)
+                      !
+                      do k = 1, kmax
+                         !
+                         j = kmax +1 - k - l
+                         if ( j < 0 ) cycle
+                         !
+                         gmatw(nm,k,2*j+1) = gmatw(nm,k,2*j+1) + gmatw(nm,k,2*j+2)
+                         gmatw(nm,k,2*j+2) = 0.
+                         !
+                      enddo
+                      !
+                   enddo
+                enddo
+                !
+             enddo
+             !
+          else if ( ihydro == 2 ) then
+             !
+             ! central differences, so non-hydrostatic pressure is located at the cell centers
+             !
+             do n = nfu, nl
+                do m = mfu, ml
+                   !
+                   nm = kgrpnt(m,n)
+                   !
+                   if ( wets(nm) == 1 ) then
+                      !
+                      do k = 1, kmax
+                         !
+                         kd = max(k-1,1)
+                         !
+                         gmatw(nm,k,1) =  2./(hks(nm,kd) + hks(nm,k))
+                         gmatw(nm,k,2) = -gmatw(nm,k,1)
+                         !
+                      enddo
+                      !
+                   else
+                      !
+                      gmatw(nm,:,1) = 0.
+                      gmatw(nm,:,2) = 0.
+                      !
+                   endif
+                   !
+                   gmatw(nm,1,2) = gmatw(nm,1,2) - gmatw(nm,1,1)
+                   gmatw(nm,1,1) = 0.
+                   !
+                enddo
+             enddo
+             !
+          endif
+          !
+          ! compute gradient of non-hydrostatic pressure
+          !
+          fac = (-1.)**kmax
+          !
+          if ( iproj == 1 ) then
+             fac1 = 1.
+          else if ( iproj == 2 ) then
+             fac1 = 1. - theta3
+          endif
+          !
+          do k = 0, kmax-1
+             !
+             fac = -fac
+             !
+             do n = nfu, nl
+                do m = mfu, ml
+                   !
+                   nm = kgrpnt(m,n)
+                   !
+                   if ( wets(nm) == 1 ) then
+                      !
+                      if ( ihydro == 1 .and. presp(nm) == 0 ) then
+                         !
+                         do j = 0, kmax-1
+                            !
+                            kd = max(k+j  ,1   )
+                            kd = min(kd   ,kmax)
+                            ku = min(k+j+1,kmax)
+                            !
+                            rhsw(nm,k) = rhsw(nm,k) - fac1 * ( gmatw(nm,k+1,2*j+1)*q(nm,kd) + gmatw(nm,k+1,2*j+2)*q(nm,ku) )
+                            !
+                         enddo
+                         !
+                         !rhsw(nm,k) = rhsw(nm,k) - fac * ( w1(nm,kmax) - w0(nm,kmax) ) / (dt*thetaw)
+                         !
+                      else
+                         !
+                         kd = max(k,1)
+                         !
+                         rhsw(nm,k) = rhsw(nm,k) - fac1 * ( gmatw(nm,k+1,1)*q(nm,kd) + gmatw(nm,k+1,2)*q(nm,k+1) )
+                         !
+                      endif
+                      !
+                   endif
+                   !
+                enddo
+             enddo
+             !
+          enddo
+          !
+          ! compute flow resistance inside porous medium, if appropriate
+          !
+          if ( iporos == 1 ) then
+             !
+             do k = 0, kmax-1
+                !
+                kd = max(k,1)
+                !
+                do n = nfu, nl
+                   do m = mfu, ml
+                      !
+                      md = m - 1
+                      nd = n - 1
+                      !
+                      nm  = kgrpnt(m ,n )
+                      nmd = kgrpnt(md,n )
+                      ndm = kgrpnt(m ,nd)
+                      !
+                      ! for permanently dry neighbours, corresponding values will be mirrored
+                      !
+                      if ( nmd == 1 ) nmd = nm
+                      if ( ndm == 1 ) ndm = nm
+                      !
+                      if ( wets(nm) == 1 ) then
+                         !
+                         u = 0.25 * ( u0(nm,kd) + u0(nmd,kd) + u0(nm,k+1) + u0(nmd,k+1) )
+                         v = 0.25 * ( v0(nm,kd) + v0(ndm,kd) + v0(nm,k+1) + v0(ndm,k+1) )
+                         !
+                         utot = sqrt( u*u + v*v + w0(nm,k)*w0(nm,k) )
+                         !
+                         amatw(nm,k,1) = amatw(nm,k,1) + apoks(nm,k) + bpoks(nm,k) * utot
+                         !
+                         amatw(nm,k,1) = amatw(nm,k,1) + cpoks(nm,k) / (dt*thetaw)
+                         rhsw (nm,k  ) = rhsw (nm,k  ) + cpoks(nm,k) * w0(nm,k) / (dt*thetaw)
+                         !
+                      endif
+                      !
+                   enddo
+                enddo
+                !
+             enddo
+             !
+          endif
+          !
+          ! compute friction due to vegetation modelled as horizontal cylinders, if appropriate
+          !
+          if ( ivegw /= 0 ) then
+             !
+             do k = 0, kmax-1
+                !
+                kd = max(k,1)
+                !
+                do n = nfu, nl
+                   do m = mfu, ml
+                      !
+                      md = m - 1
+                      nd = n - 1
+                      !
+                      nm  = kgrpnt(m ,n )
+                      nmd = kgrpnt(md,n )
+                      ndm = kgrpnt(m ,nd)
+                      !
+                      ! for permanently dry neighbours, corresponding values will be mirrored
+                      !
+                      if ( nmd == 1 ) nmd = nm
+                      if ( ndm == 1 ) ndm = nm
+                      !
+                      if ( wets(nm) == 1 ) then
+                         !
+                         amatw(nm,k,1) = amatw(nm,k,1) + 0.125 * ( cvegu(nm,kd,1) + cvegu(nmd,kd,1) + cvegu(nm,k+1,1) + cvegu(nmd,k+1,1) +  &
+                                                                   cvegv(nm,kd,1) + cvegv(ndm,kd,1) + cvegv(nm,k+1,1) + cvegv(ndm,k+1,1) ) * abs(w0(nm,k))
+                         !
+                      endif
+                      !
+                   enddo
+                enddo
+                !
+             enddo
+             !
+          endif
+          !
+          ! hull (pressurized flow):
+          !
+          ! the kinematic condition is imposed
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                md = m - 1
+                nd = n - 1
+                !
+                nm  = kgrpnt(m ,n )
+                nmd = kgrpnt(md,n )
+                ndm = kgrpnt(m ,nd)
+                !
+                ! for permanently dry neighbours, corresponding values will be mirrored
+                !
+                if ( nmd == 1 ) nmd = nm
+                if ( ndm == 1 ) ndm = nm
+                !
+                if ( wets(nm) == 1 .and. presp(nm) == 1 ) then
+                   !
+                   dxl = 0.5 * ( gvv(nm) + gvv(ndm) )
+                   dyl = 0.5 * ( guu(nm) + guu(nmd) )
+                   !
+                   amatw(nm,0,1) = 1.
+                   amatw(nm,0,2) = 0.
+                   amatw(nm,0,3) = 0.
+                   w1   (nm,0  ) = 0.25 * ( 3.*(u1(nm,1)+u1(nmd,1)) - u1(nm,2) - u1(nmd,2) ) * ( zku(nm,0) - zku(nmd,0) ) / dxl +  &
+                                   0.25 * ( 3.*(v1(nm,1)+v1(ndm,1)) - v1(nm,2) - v1(ndm,2) ) * ( zkv(nm,0) - zkv(ndm,0) ) / dyl
+                   rhsw (nm,0  ) = w1(nm,0)
+                   !
+                endif
+                !
+             enddo
+          enddo
+          !
+       endif
+       !
+       ! solve the w-momentum equation
+       !
+       if ( ihydro == 1 .or. ihydro == 2 ) then
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                nm = kgrpnt(m,n)
+                !
+                bi = 1./amatw(nm,0,1)
+                !
+                amatw(nm,0,1) = bi
+                amatw(nm,0,3) = amatw(nm,0,3)*bi
+                rhsw (nm,0  ) = rhsw (nm,0  )*bi
+                !
+                do k = 1, kmax
+                   !
+                   bi = 1./(amatw(nm,k,1) - amatw(nm,k,2)*amatw(nm,k-1,3))
+                   amatw(nm,k,1) = bi
+                   amatw(nm,k,3) = amatw(nm,k,3)*bi
+                   rhsw (nm,k  ) = (rhsw(nm,k) - amatw(nm,k,2)*rhsw(nm,k-1))*bi
+                   !
+                enddo
+                !
+                w1(nm,kmax) = rhsw(nm,kmax)
+                do k = kmax-1, 0, -1
+                   w1(nm,k) = rhsw(nm,k) - amatw(nm,k,3)*w1(nm,k+1)
+                enddo
+                !
+             enddo
+          enddo
+          !
+          ! re-update the solution in case of thetaw <> 1
+          !
+          if ( thetaw /= 1. ) then
+             !
+             do n = nfu, nl
+                do m = mfu, ml
+                   !
+                   nm = kgrpnt(m,n)
+                   !
+                   if ( wets(nm) == 1 .and. presp(nm) == 0 ) then
+                      !
+                      w1(nm,0) = ( w1(nm,0) - (1.-thetaw) * w0(nm,0) ) / thetaw
+                      !
+                   endif
+                   !
+                enddo
+             enddo
+             !
+             do k = 1, kmax-1
+                !
+                do n = nfu, nl
+                   do m = mfu, ml
+                      !
+                      nm = kgrpnt(m,n)
+                      !
+                      if ( wets(nm) == 1 ) then
+                         !
+                         w1(nm,k) = ( w1(nm,k) - (1.-thetaw) * w0(nm,k) ) / thetaw
+                         !
+                      endif
+                      !
+                   enddo
+                enddo
+                !
+             enddo
+             !
+          endif
+          !
+       endif
+       !
+       ! compute the non-hydrostatic pressure correction
+       !
+       if ( ihydro == 1 .or. ihydro == 2 ) then
+          !
+          ! build divergence matrix
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                md = m - 1
+                nd = n - 1
+                !
+                nm  = kgrpnt(m ,n )
+                nmd = kgrpnt(md,n )
+                ndm = kgrpnt(m ,nd)
+                !
+                ! for permanently dry neighbours, corresponding values will be mirrored
+                !
+                if ( nmd == 1 ) nmd = nm
+                if ( ndm == 1 ) ndm = nm
+                !
+                if ( wets(nm) == 1 ) then
+                   !
+                   dxl = 0.5 * ( gvv(nm) + gvv(ndm) )
+                   dyl = 0.5 * ( guu(nm) + guu(nmd) )
+                   !
+                   do k = 1, kmax
+                      !
+                      kd = max(k-1,1   )
+                      ku = min(k+1,kmax)
+                      !
+                      fac1 = ( zku(nm,k-1) - zku(nmd,k-1) ) / ( 2.* dxl * ( hks(nm,k ) + hks(nm,kd) ) )
+                      fac2 = ( zku(nm,k  ) - zku(nmd,k  ) ) / ( 2.* dxl * ( hks(nm,ku) + hks(nm,k ) ) )
+                      !
+                      if ( k == kmax ) fac2 = 0.
+                      if ( k == 1 .and. presp(nm) == 1 ) fac1 = 0.
+                      !
+                      dmat(nm,k,1) =     -fac1 * hks(nm ,k)
+                      dmat(nm,k,2) =   guu(nm) * hku(nm ,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
+                      dmat(nm,k,3) =     -fac1 * hks(nm ,k)
+                      dmat(nm,k,4) = -guu(nmd) * hku(nmd,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
+                      dmat(nm,k,5) =      fac2 * hks(nm ,k)
+                      dmat(nm,k,6) =      fac2 * hks(nm ,k)
+                      !
+                      fac1 = ( zkv(nm,k-1) - zkv(ndm,k-1) ) / ( 2.* dyl * ( hks(nm,k ) + hks(nm,kd) ) )
+                      fac2 = ( zkv(nm,k  ) - zkv(ndm,k  ) ) / ( 2.* dyl * ( hks(nm,ku) + hks(nm,k ) ) )
+                      !
+                      if ( k == kmax ) fac2 = 0.
+                      if ( k == 1 .and. presp(nm) == 1 ) fac1 = 0.
+                      !
+                      dmat(nm,k, 7) =     -fac1 * hks(nm ,k)
+                      dmat(nm,k, 8) =   gvv(nm) * hkv(nm ,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
+                      dmat(nm,k, 9) =     -fac1 * hks(nm ,k)
+                      dmat(nm,k,10) = -gvv(ndm) * hkv(ndm,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
+                      dmat(nm,k,11) =      fac2 * hks(nm ,k)
+                      dmat(nm,k,12) =      fac2 * hks(nm ,k)
+                      !
+                   enddo
+                   !
+                else
+                   !
+                   dmat(nm,:,:) = 0.
+                   !
+                endif
+                !
+             enddo
+          enddo
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                nm = kgrpnt(m,n)
+                !
+                dmat(nm,1, 2) = dmat(nm,1, 2) + 2.*dmat(nm,1,1)
+                dmat(nm,1, 5) = dmat(nm,1, 5) -    dmat(nm,1,1)
+                dmat(nm,1, 4) = dmat(nm,1, 4) + 2.*dmat(nm,1,3)
+                dmat(nm,1, 6) = dmat(nm,1, 6) -    dmat(nm,1,3)
+                dmat(nm,1, 1) = 0.
+                dmat(nm,1, 3) = 0.
+                !
+                dmat(nm,1, 8) = dmat(nm,1, 8) + 2.*dmat(nm,1,7)
+                dmat(nm,1,11) = dmat(nm,1,11) -    dmat(nm,1,7)
+                dmat(nm,1,10) = dmat(nm,1,10) + 2.*dmat(nm,1,9)
+                dmat(nm,1,12) = dmat(nm,1,12) -    dmat(nm,1,9)
+                dmat(nm,1, 7) = 0.
+                dmat(nm,1, 9) = 0.
+                !
+             enddo
+          enddo
+          !
+          ! build the Poisson equation
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                md = m - 1
+                nd = n - 1
+                !
+                nm  = kgrpnt(m ,n )
+                nmd = kgrpnt(md,n )
+                ndm = kgrpnt(m ,nd)
+                !
+                do k = 1, kmax
+                   !
+                   kd = max(k-1,1   )
+                   ku = min(k+1,kmax)
+                   !
+                   kwu = 1.
+                   if ( k == kmax ) kwu = 0.
+                   !
+                   kwd = 1.
+                   if ( k == 1 .and. presp(nm) == 1 ) kwd = 0.
+                   !
+                   amatp(nm,k, 1) = dmat(nm,k, 2) * gmatu(nm ,k ,2) + dmat(nm,k, 4) * gmatu(nmd,k ,4) + dmat(nm,k, 1) * gmatu(nm ,kd,5) +  &
+                                    dmat(nm,k, 3) * gmatu(nmd,kd,6) + dmat(nm,k, 5) * gmatu(nm ,ku,1) + dmat(nm,k, 6) * gmatu(nmd,ku,3) +  &
+                                    dmat(nm,k, 8) * gmatv(nm ,k ,2) + dmat(nm,k,10) * gmatv(ndm,k ,4) + dmat(nm,k, 7) * gmatv(nm ,kd,5) +  &
+                                    dmat(nm,k, 9) * gmatv(ndm,kd,6) + dmat(nm,k,11) * gmatv(nm ,ku,1) + dmat(nm,k,12) * gmatv(ndm,ku,3)
+                   amatp(nm,k, 2) = dmat(nm,k, 4) * gmatu(nmd,k ,2) + dmat(nm,k, 3) * gmatu(nmd,kd,5) + dmat(nm,k, 6) * gmatu(nmd,ku,1)
+                   amatp(nm,k, 3) = dmat(nm,k, 2) * gmatu(nm ,k ,4) + dmat(nm,k, 1) * gmatu(nm ,kd,6) + dmat(nm,k, 5) * gmatu(nm ,ku,3)
+                   amatp(nm,k, 4) = dmat(nm,k, 2) * gmatu(nm ,k ,1) + dmat(nm,k, 4) * gmatu(nmd,k ,3) + dmat(nm,k, 1) * gmatu(nm ,kd,2) +  &
+                                    dmat(nm,k, 3) * gmatu(nmd,kd,4) + dmat(nm,k, 8) * gmatv(nm ,k ,1) + dmat(nm,k,10) * gmatv(ndm,k ,3) +  &
+                                    dmat(nm,k, 7) * gmatv(nm ,kd,2) + dmat(nm,k, 9) * gmatv(ndm,kd,4)
+                   amatp(nm,k, 5) = dmat(nm,k, 2) * gmatu(nm ,k ,5) + dmat(nm,k, 4) * gmatu(nmd,k ,6) + dmat(nm,k, 5) * gmatu(nm ,ku,2) +  &
+                                    dmat(nm,k, 6) * gmatu(nmd,ku,4) + dmat(nm,k, 8) * gmatv(nm ,k ,5) + dmat(nm,k,10) * gmatv(ndm,k ,6) +  &
+                                    dmat(nm,k,11) * gmatv(nm ,ku,2) + dmat(nm,k,12) * gmatv(ndm,ku,4)
+                   amatp(nm,k, 6) = dmat(nm,k,10) * gmatv(ndm,k ,2) + dmat(nm,k, 9) * gmatv(ndm,kd,5) + dmat(nm,k,12) * gmatv(ndm,ku,1)
+                   amatp(nm,k, 7) = dmat(nm,k, 8) * gmatv(nm ,k ,4) + dmat(nm,k, 7) * gmatv(nm ,kd,6) + dmat(nm,k,11) * gmatv(nm ,ku,3)
+                   amatp(nm,k, 8) = dmat(nm,k, 2) * gmatu(nm ,k ,3) + dmat(nm,k, 1) * gmatu(nm ,kd,4)
+                   amatp(nm,k, 9) = dmat(nm,k, 8) * gmatv(nm ,k ,3) + dmat(nm,k, 7) * gmatv(nm ,kd,4)
+                   amatp(nm,k,10) = dmat(nm,k, 4) * gmatu(nmd,k ,1) + dmat(nm,k, 3) * gmatu(nmd,kd,2)
+                   amatp(nm,k,11) = dmat(nm,k,10) * gmatv(ndm,k ,1) + dmat(nm,k, 9) * gmatv(ndm,kd,2)
+                   amatp(nm,k,12) = dmat(nm,k, 2) * gmatu(nm ,k ,6) + dmat(nm,k, 5) * gmatu(nm ,ku,4)
+                   amatp(nm,k,13) = dmat(nm,k, 8) * gmatv(nm ,k ,6) + dmat(nm,k,11) * gmatv(nm ,ku,4)
+                   amatp(nm,k,14) = dmat(nm,k, 4) * gmatu(nmd,k ,5) + dmat(nm,k, 6) * gmatu(nmd,ku,2)
+                   amatp(nm,k,15) = dmat(nm,k,10) * gmatv(ndm,k ,5) + dmat(nm,k,12) * gmatv(ndm,ku,2)
+                   amatp(nm,k,16) = dmat(nm,k, 1) * gmatu(nm ,kd,1) + dmat(nm,k, 3) * gmatu(nmd,kd,3) + dmat(nm,k, 7) * gmatv(nm,kd,1) + dmat(nm,k, 9) * gmatv(ndm,kd,3)
+                   amatp(nm,k,17) = dmat(nm,k, 5) * gmatu(nm ,ku,5) + dmat(nm,k, 6) * gmatu(nmd,ku,6) + dmat(nm,k,11) * gmatv(nm,ku,5) + dmat(nm,k,12) * gmatv(ndm,ku,6)
+                   amatp(nm,k,18) = dmat(nm,k, 1) * gmatu(nm ,kd,3)
+                   amatp(nm,k,19) = dmat(nm,k, 7) * gmatv(nm ,kd,3)
+                   amatp(nm,k,20) = dmat(nm,k, 3) * gmatu(nmd,kd,1)
+                   amatp(nm,k,21) = dmat(nm,k, 9) * gmatv(ndm,kd,1)
+                   amatp(nm,k,22) = dmat(nm,k, 5) * gmatu(nm ,ku,6)
+                   amatp(nm,k,23) = dmat(nm,k,11) * gmatv(nm ,ku,6)
+                   amatp(nm,k,24) = dmat(nm,k, 6) * gmatu(nmd,ku,5)
+                   amatp(nm,k,25) = dmat(nm,k,12) * gmatv(ndm,ku,5)
+                   !
+                   if ( ihydro == 1 .and. presp(nm) == 0 ) then
+                      !
+                      do j = 3, kmax-1
+                         !
+                         amatp(nm,k,ishif(j)) = 0.
+                         !
+                      enddo
+                      !
+                      amatp(nm,k,1) = amatp(nm,k,1) + gmatw(nm,k,2) + gmatw(nm,k,3) - kwu * gmatw(nm,ku,1)
+                      !
+                      do j = 1, kmax-2
+                         !
+                         amatp(nm,k,ishif(j)) = amatp(nm,k,ishif(j)) + gmatw(nm,k,2*j+2) + gmatw(nm,k,2*j+3) - kwu * gmatw(nm,ku,2*j) - kwu * gmatw(nm,ku,2*j+1)
+                         !
+                      enddo
+                      !
+                      amatp(nm,k,ishif(kmax-1)) = amatp(nm,k,ishif(kmax-1)) + gmatw(nm,k,2*kmax) - kwu * gmatw(nm,ku,2*kmax-2)
+                      !
+                      amatp(nm,k,4) = amatp(nm,k,4) + gmatw(nm,k,1)
+                      !
+                   else
+                      !
+                      amatp(nm,k,1) = amatp(nm,k,1) + kwd * gmatw(nm,k,2) - kwu * gmatw(nm,ku,1)
+                      amatp(nm,k,4) = amatp(nm,k,4) + kwd * gmatw(nm,k,1)
+                      amatp(nm,k,5) = amatp(nm,k,5)                       - kwu * gmatw(nm,ku,2)
+                      !
+                   endif
+                   !
+                   rhsp(nm,k) = ( dmat(nm,k,2)*u1(nm ,k ) + dmat(nm,k, 4)*u1(nmd,k ) + dmat(nm,k, 1)*u1(nm ,kd) +  &
+                                  dmat(nm,k,3)*u1(nmd,kd) + dmat(nm,k, 5)*u1(nm ,ku) + dmat(nm,k, 6)*u1(nmd,ku) +  &
+                                  dmat(nm,k,8)*v1(nm ,k ) + dmat(nm,k,10)*v1(ndm,k ) + dmat(nm,k, 7)*v1(nm ,kd) +  &
+                                  dmat(nm,k,9)*v1(ndm,kd) + dmat(nm,k,11)*v1(nm ,ku) + dmat(nm,k,12)*v1(ndm,ku) +  &
+                                  kwd*w1(nm,k-1) - kwu*w1(nm,k) ) / (dt*theta3)
+                   !
+                enddo
+                !
+             enddo
+          enddo
+          !
+          ! reduce the pressure Poisson equation
+          !
+          do l = 1, qlay
+             !
+             do n = nfu, nl
+                do m = mfu, ml
+                   !
+                   nm = kgrpnt(m,n)
+                   !
+                   amatp(nm,qmax, 1) = amatp(nm,qmax, 1) + real(qlay+2-l)*amatp(nm,kmax-l+1, 4)
+                   amatp(nm,qmax, 2) = amatp(nm,qmax, 2) + real(qlay+2-l)*amatp(nm,kmax-l+1,10)
+                   amatp(nm,qmax, 3) = amatp(nm,qmax, 3) + real(qlay+2-l)*amatp(nm,kmax-l+1, 8)
+                   amatp(nm,qmax, 6) = amatp(nm,qmax, 6) + real(qlay+2-l)*amatp(nm,kmax-l+1,11)
+                   amatp(nm,qmax, 7) = amatp(nm,qmax, 7) + real(qlay+2-l)*amatp(nm,kmax-l+1, 9)
+                   amatp(nm,qmax, 4) = amatp(nm,qmax, 4) + real(qlay+2-l)*amatp(nm,kmax-l+1,16)
+                   amatp(nm,qmax, 8) = amatp(nm,qmax, 8) + real(qlay+2-l)*amatp(nm,kmax-l+1,18)
+                   amatp(nm,qmax,10) = amatp(nm,qmax,10) + real(qlay+2-l)*amatp(nm,kmax-l+1,20)
+                   amatp(nm,qmax, 9) = amatp(nm,qmax, 9) + real(qlay+2-l)*amatp(nm,kmax-l+1,19)
+                   amatp(nm,qmax,11) = amatp(nm,qmax,11) + real(qlay+2-l)*amatp(nm,kmax-l+1,21)
+                   rhsp (nm,qmax   ) = rhsp (nm,qmax   ) + real(qlay+2-l)*rhsp (nm,kmax-l+1   )
+                   !
+                enddo
+             enddo
+             !
+          enddo
+          !
+          do n = nfu, nl
+             do m = mfu, ml
+                !
+                nm = kgrpnt(m,n)
+                !
+                do k = 1, kmax
+                   !
+                   if ( .not. amatp(nm,k,1) /= 0. ) then
+                      amatp(nm,k,:) =  0.
+                      amatp(nm,k,1) = -1.
+                      rhsp (nm,k  ) =  0.
+                   endif
+                   !
+                enddo
+                !
+             enddo
+          enddo
+          !
+          ! solve the Poisson equation
+          !
+          if ( qmax == 1 ) then
+             !
+             amat(:,1) = amatp(:,1,1)
+             amat(:,2) = amatp(:,1,2)
+             amat(:,3) = amatp(:,1,3)
+             amat(:,4) = amatp(:,1,6)
+             amat(:,5) = amatp(:,1,7)
+             call sip( amat, rhsp(1,1), dq(1,1) )
+             if (STPNOW()) return
+             !
+          else
+             !
+             if ( lprecon ) then
+                !
+!TIMG                call SWTSTA(296)
+                if ( icond == 1 ) then
+                   !
+                   ! compute incomplete LU factorization restricted to diagonal used as split preconditioner
+                   !
+                   call iluds ( amatp(1:mcgrd,1:qmax,1:nconct) )
+                   !
+                else if ( icond == 2 ) then
+                   !
+                   ! compute incomplete LU factorization restricted to diagonal used as right preconditioner
+                   !
+                   call ilud ( amatp(1:mcgrd,1:qmax,1:nconct) )
+                   !
+                else if ( icond == 3 ) then
+                   !
+                   ! compute classical incomplete LU factorization
+                   !
+                   call ilu ( amatp(1:mcgrd,1:qmax,1:nconct) )
+                   !
+                endif
+!TIMG                call SWTSTO(296)
+                !
+             endif
+             !
+!TIMG             call SWTSTA(297)
+             call bicgstab ( amatp(1:mcgrd,1:qmax,1:nconct), rhsp(1:mcgrd,1:qmax), dq(1:mcgrd,1:qmax) )
+!TIMG             call SWTSTO(297)
+             if (STPNOW()) return
+             !
+          endif
+          !
+          ! exchange pressure corrections with neighbouring subdomains
+          !
+          call SWEXCHG ( dq(1:mcgrd,1:qmax), kgrpnt, 1, qmax )
+          if (STPNOW()) return
+          !
+          do k = qmax+1, kmax
+             !
+             dq(:,k) = dq(:,qmax)
+             !
+          enddo
+          !
+       endif
+       !
+       ! update pressure gradient in case of pressure projection
+       !
+       if ( lpproj ) then
+          !
+          do k = 1, kmax
+             !
+             kd = max(k-1,1   )
+             ku = min(k+1,kmax)
+             !
+             do n = nfu, nl
+                do m = mf, ml
+                   !
+                   mu = m + 1
+                   !
+                   nm  = kgrpnt(m ,n)
+                   nmu = kgrpnt(mu,n)
+                   !
+                   if ( uwetp(nm) == 1 .and. presu(nm) == 0 ) then
+                      !
+                      dqgrdu(nm,k) = gmatu(nm,k,1)*dq(nm ,kd) + gmatu(nm,k,2)*dq(nm,k ) + gmatu(nm,k,3)*dq(nmu,kd)  &
+                                   + gmatu(nm,k,4)*dq(nmu,k ) + gmatu(nm,k,5)*dq(nm,ku) + gmatu(nm,k,6)*dq(nmu,ku)
+                      !
+                   else
+                      ! no correction applied on piezometric head
+                      !
+                      dqgrdu(nm,k) = 0.
+                      !
+                   endif
+                   !
+                enddo
+             enddo
+             !
+             do m = mfu, ml
+                do n = nf, nl
+                   !
+                   nu = n + 1
+                   !
+                   nm  = kgrpnt(m,n )
+                   num = kgrpnt(m,nu)
+                   !
+                   if ( vwetp(nm) == 1 .and. presv(nm) == 0 ) then
+                      !
+                      dqgrdv(nm,k) = gmatv(nm,k,1)*dq(nm ,kd) + gmatv(nm,k,2)*dq(nm,k ) + gmatv(nm,k,3)*dq(num,kd)  &
+                                   + gmatv(nm,k,4)*dq(num,k ) + gmatv(nm,k,5)*dq(nm,ku) + gmatv(nm,k,6)*dq(num,ku)
+                      !
+                   else
+                      ! no correction applied on piezometric head
+                      !
+                      dqgrdv(nm,k) = 0.
                       !
                    endif
                    !
@@ -4478,286 +5624,7 @@ subroutine SwashImpLay2DHflow
           !
        endif
        !
-    endif
-    !
-    ! compute the non-hydrostatic pressure correction
-    !
-    if ( ihydro == 1 .or. ihydro == 2 ) then
-       !
-       ! build divergence matrix
-       !
-       do n = nfu, nl
-          do m = mfu, ml
-             !
-             md = m - 1
-             nd = n - 1
-             !
-             nm  = kgrpnt(m ,n )
-             nmd = kgrpnt(md,n )
-             ndm = kgrpnt(m ,nd)
-             !
-             ! for permanently dry neighbours, corresponding values will be mirrored
-             !
-             if ( nmd == 1 ) nmd = nm
-             if ( ndm == 1 ) ndm = nm
-             !
-             if ( wets(nm) == 1 ) then
-                !
-                dxl = 0.5 * ( gvv(nm) + gvv(ndm) )
-                dyl = 0.5 * ( guu(nm) + guu(nmd) )
-                !
-                do k = 1, kmax
-                   !
-                   kd = max(k-1,1   )
-                   ku = min(k+1,kmax)
-                   !
-                   fac1 = ( zku(nm,k-1) - zku(nmd,k-1) ) / ( 2.* dxl * ( hks(nm,k ) + hks(nm,kd) ) )
-                   fac2 = ( zku(nm,k  ) - zku(nmd,k  ) ) / ( 2.* dxl * ( hks(nm,ku) + hks(nm,k ) ) )
-                   !
-                   if ( k == kmax ) fac2 = 0.
-                   !
-                   dmat(nm,k,1) =     -fac1 * hks(nm ,k)
-                   dmat(nm,k,2) =   guu(nm) * hku(nm ,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
-                   dmat(nm,k,3) =     -fac1 * hks(nm ,k)
-                   dmat(nm,k,4) = -guu(nmd) * hku(nmd,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
-                   dmat(nm,k,5) =      fac2 * hks(nm ,k)
-                   dmat(nm,k,6) =      fac2 * hks(nm ,k)
-                   !
-                   fac1 = ( zkv(nm,k-1) - zkv(ndm,k-1) ) / ( 2.* dyl * ( hks(nm,k ) + hks(nm,kd) ) )
-                   fac2 = ( zkv(nm,k  ) - zkv(ndm,k  ) ) / ( 2.* dyl * ( hks(nm,ku) + hks(nm,k ) ) )
-                   !
-                   if ( k == kmax ) fac2 = 0.
-                   !
-                   dmat(nm,k, 7) =     -fac1 * hks(nm ,k)
-                   dmat(nm,k, 8) =   gvv(nm) * hkv(nm ,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
-                   dmat(nm,k, 9) =     -fac1 * hks(nm ,k)
-                   dmat(nm,k,10) = -gvv(ndm) * hkv(ndm,k) / gsqs(nm) - fac1 * hks(nm,kd) + fac2 * hks(nm,ku)
-                   dmat(nm,k,11) =      fac2 * hks(nm ,k)
-                   dmat(nm,k,12) =      fac2 * hks(nm ,k)
-                   !
-                enddo
-                !
-             else
-                !
-                dmat(nm,:,:) = 0.
-                !
-             endif
-             !
-          enddo
-       enddo
-       !
-       do n = nfu, nl
-          do m = mfu, ml
-             !
-             nm = kgrpnt(m,n)
-             !
-             dmat(nm,1, 2) = dmat(nm,1, 2) + 2.*dmat(nm,1,1)
-             dmat(nm,1, 5) = dmat(nm,1, 5) -    dmat(nm,1,1)
-             dmat(nm,1, 4) = dmat(nm,1, 4) + 2.*dmat(nm,1,3)
-             dmat(nm,1, 6) = dmat(nm,1, 6) -    dmat(nm,1,3)
-             dmat(nm,1, 1) = 0.
-             dmat(nm,1, 3) = 0.
-             !
-             dmat(nm,1, 8) = dmat(nm,1, 8) + 2.*dmat(nm,1,7)
-             dmat(nm,1,11) = dmat(nm,1,11) -    dmat(nm,1,7)
-             dmat(nm,1,10) = dmat(nm,1,10) + 2.*dmat(nm,1,9)
-             dmat(nm,1,12) = dmat(nm,1,12) -    dmat(nm,1,9)
-             dmat(nm,1, 7) = 0.
-             dmat(nm,1, 9) = 0.
-             !
-          enddo
-       enddo
-       !
-       ! build the Poisson equation
-       !
-       do n = nfu, nl
-          do m = mfu, ml
-             !
-             md = m - 1
-             nd = n - 1
-             !
-             nm  = kgrpnt(m ,n )
-             nmd = kgrpnt(md,n )
-             ndm = kgrpnt(m ,nd)
-             !
-             do k = 1, kmax
-                !
-                kd = max(k-1,1   )
-                ku = min(k+1,kmax)
-                !
-                kwu = 1.
-                if ( k == kmax ) kwu = 0.
-                !
-                amatp(nm,k, 1) = dmat(nm,k, 2) * gmatu(nm ,k ,2) + dmat(nm,k, 4) * gmatu(nmd,k ,4) + dmat(nm,k, 1) * gmatu(nm ,kd,5) +  &
-                                 dmat(nm,k, 3) * gmatu(nmd,kd,6) + dmat(nm,k, 5) * gmatu(nm ,ku,1) + dmat(nm,k, 6) * gmatu(nmd,ku,3) +  &
-                                 dmat(nm,k, 8) * gmatv(nm ,k ,2) + dmat(nm,k,10) * gmatv(ndm,k ,4) + dmat(nm,k, 7) * gmatv(nm ,kd,5) +  &
-                                 dmat(nm,k, 9) * gmatv(ndm,kd,6) + dmat(nm,k,11) * gmatv(nm ,ku,1) + dmat(nm,k,12) * gmatv(ndm,ku,3)
-                amatp(nm,k, 2) = dmat(nm,k, 4) * gmatu(nmd,k ,2) + dmat(nm,k, 3) * gmatu(nmd,kd,5) + dmat(nm,k, 6) * gmatu(nmd,ku,1)
-                amatp(nm,k, 3) = dmat(nm,k, 2) * gmatu(nm ,k ,4) + dmat(nm,k, 1) * gmatu(nm ,kd,6) + dmat(nm,k, 5) * gmatu(nm ,ku,3)
-                amatp(nm,k, 4) = dmat(nm,k, 2) * gmatu(nm ,k ,1) + dmat(nm,k, 4) * gmatu(nmd,k ,3) + dmat(nm,k, 1) * gmatu(nm ,kd,2) +  &
-                                 dmat(nm,k, 3) * gmatu(nmd,kd,4) + dmat(nm,k, 8) * gmatv(nm ,k ,1) + dmat(nm,k,10) * gmatv(ndm,k ,3) +  &
-                                 dmat(nm,k, 7) * gmatv(nm ,kd,2) + dmat(nm,k, 9) * gmatv(ndm,kd,4) + gmatw(nm,k,1)
-                amatp(nm,k, 5) = dmat(nm,k, 2) * gmatu(nm ,k ,5) + dmat(nm,k, 4) * gmatu(nmd,k ,6) + dmat(nm,k, 5) * gmatu(nm ,ku,2) +  &
-                                 dmat(nm,k, 6) * gmatu(nmd,ku,4) + dmat(nm,k, 8) * gmatv(nm ,k ,5) + dmat(nm,k,10) * gmatv(ndm,k ,6) +  &
-                                 dmat(nm,k,11) * gmatv(nm ,ku,2) + dmat(nm,k,12) * gmatv(ndm,ku,4)
-                amatp(nm,k, 6) = dmat(nm,k,10) * gmatv(ndm,k ,2) + dmat(nm,k, 9) * gmatv(ndm,kd,5) + dmat(nm,k,12) * gmatv(ndm,ku,1)
-                amatp(nm,k, 7) = dmat(nm,k, 8) * gmatv(nm ,k ,4) + dmat(nm,k, 7) * gmatv(nm ,kd,6) + dmat(nm,k,11) * gmatv(nm ,ku,3)
-                amatp(nm,k, 8) = dmat(nm,k, 2) * gmatu(nm ,k ,3) + dmat(nm,k, 1) * gmatu(nm ,kd,4)
-                amatp(nm,k, 9) = dmat(nm,k, 8) * gmatv(nm ,k ,3) + dmat(nm,k, 7) * gmatv(nm ,kd,4)
-                amatp(nm,k,10) = dmat(nm,k, 4) * gmatu(nmd,k ,1) + dmat(nm,k, 3) * gmatu(nmd,kd,2)
-                amatp(nm,k,11) = dmat(nm,k,10) * gmatv(ndm,k ,1) + dmat(nm,k, 9) * gmatv(ndm,kd,2)
-                amatp(nm,k,12) = dmat(nm,k, 2) * gmatu(nm ,k ,6) + dmat(nm,k, 5) * gmatu(nm ,ku,4)
-                amatp(nm,k,13) = dmat(nm,k, 8) * gmatv(nm ,k ,6) + dmat(nm,k,11) * gmatv(nm ,ku,4)
-                amatp(nm,k,14) = dmat(nm,k, 4) * gmatu(nmd,k ,5) + dmat(nm,k, 6) * gmatu(nmd,ku,2)
-                amatp(nm,k,15) = dmat(nm,k,10) * gmatv(ndm,k ,5) + dmat(nm,k,12) * gmatv(ndm,ku,2)
-                amatp(nm,k,16) = dmat(nm,k, 1) * gmatu(nm ,kd,1) + dmat(nm,k, 3) * gmatu(nmd,kd,3) + dmat(nm,k, 7) * gmatv(nm,kd,1) + dmat(nm,k, 9) * gmatv(ndm,kd,3)
-                amatp(nm,k,17) = dmat(nm,k, 5) * gmatu(nm ,ku,5) + dmat(nm,k, 6) * gmatu(nmd,ku,6) + dmat(nm,k,11) * gmatv(nm,ku,5) + dmat(nm,k,12) * gmatv(ndm,ku,6)
-                amatp(nm,k,18) = dmat(nm,k, 1) * gmatu(nm ,kd,3)
-                amatp(nm,k,19) = dmat(nm,k, 7) * gmatv(nm ,kd,3)
-                amatp(nm,k,20) = dmat(nm,k, 3) * gmatu(nmd,kd,1)
-                amatp(nm,k,21) = dmat(nm,k, 9) * gmatv(ndm,kd,1)
-                amatp(nm,k,22) = dmat(nm,k, 5) * gmatu(nm ,ku,6)
-                amatp(nm,k,23) = dmat(nm,k,11) * gmatv(nm ,ku,6)
-                amatp(nm,k,24) = dmat(nm,k, 6) * gmatu(nmd,ku,5)
-                amatp(nm,k,25) = dmat(nm,k,12) * gmatv(ndm,ku,5)
-                !
-                if ( ihydro == 1 ) then
-                   !
-                   do j = 3, kmax-1
-                      !
-                      amatp(nm,k,ishif(j)) = 0.
-                      !
-                   enddo
-                   !
-                   amatp(nm,k,1) = amatp(nm,k,1) + gmatw(nm,k,2) + gmatw(nm,k,3) - kwu * gmatw(nm,ku,1)
-                   !
-                   do j = 1, kmax-2
-                      !
-                      amatp(nm,k,ishif(j)) = amatp(nm,k,ishif(j)) + gmatw(nm,k,2*j+2) + gmatw(nm,k,2*j+3) - kwu * gmatw(nm,ku,2*j) - kwu * gmatw(nm,ku,2*j+1)
-                      !
-                   enddo
-                   !
-                   amatp(nm,k,ishif(kmax-1)) = amatp(nm,k,ishif(kmax-1)) + gmatw(nm,k,2*kmax) - kwu * gmatw(nm,ku,2*kmax-2)
-                   !
-                else
-                   !
-                   amatp(nm,k,1) = amatp(nm,k,1) + gmatw(nm,k,2) - kwu * gmatw(nm,ku,1)
-                   amatp(nm,k,5) = amatp(nm,k,5)                 - kwu * gmatw(nm,ku,2)
-                   !
-                endif
-                !
-                rhsp(nm,k) = ( dmat(nm,k,2)*u1(nm ,k ) + dmat(nm,k, 4)*u1(nmd,k ) + dmat(nm,k, 1)*u1(nm ,kd) +  &
-                               dmat(nm,k,3)*u1(nmd,kd) + dmat(nm,k, 5)*u1(nm ,ku) + dmat(nm,k, 6)*u1(nmd,ku) +  &
-                               dmat(nm,k,8)*v1(nm ,k ) + dmat(nm,k,10)*v1(ndm,k ) + dmat(nm,k, 7)*v1(nm ,kd) +  &
-                               dmat(nm,k,9)*v1(ndm,kd) + dmat(nm,k,11)*v1(nm ,ku) + dmat(nm,k,12)*v1(ndm,ku) +  &
-                               w1(nm,k-1) - kwu*w1(nm,k) ) / (dt*theta3)
-                !
-             enddo
-             !
-          enddo
-       enddo
-       !
-       ! reduce the pressure Poisson equation
-       !
-       do l = 1, qlay
-          !
-          do n = nfu, nl
-             do m = mfu, ml
-                !
-                nm = kgrpnt(m,n)
-                !
-                amatp(nm,qmax, 1) = amatp(nm,qmax, 1) + real(qlay+2-l)*amatp(nm,kmax-l+1, 4)
-                amatp(nm,qmax, 2) = amatp(nm,qmax, 2) + real(qlay+2-l)*amatp(nm,kmax-l+1,10)
-                amatp(nm,qmax, 3) = amatp(nm,qmax, 3) + real(qlay+2-l)*amatp(nm,kmax-l+1, 8)
-                amatp(nm,qmax, 6) = amatp(nm,qmax, 6) + real(qlay+2-l)*amatp(nm,kmax-l+1,11)
-                amatp(nm,qmax, 7) = amatp(nm,qmax, 7) + real(qlay+2-l)*amatp(nm,kmax-l+1, 9)
-                amatp(nm,qmax, 4) = amatp(nm,qmax, 4) + real(qlay+2-l)*amatp(nm,kmax-l+1,16)
-                amatp(nm,qmax, 8) = amatp(nm,qmax, 8) + real(qlay+2-l)*amatp(nm,kmax-l+1,18)
-                amatp(nm,qmax,10) = amatp(nm,qmax,10) + real(qlay+2-l)*amatp(nm,kmax-l+1,20)
-                amatp(nm,qmax, 9) = amatp(nm,qmax, 9) + real(qlay+2-l)*amatp(nm,kmax-l+1,19)
-                amatp(nm,qmax,11) = amatp(nm,qmax,11) + real(qlay+2-l)*amatp(nm,kmax-l+1,21)
-                rhsp (nm,qmax   ) = rhsp (nm,qmax   ) + real(qlay+2-l)*rhsp (nm,kmax-l+1   )
-                !
-             enddo
-          enddo
-          !
-       enddo
-       !
-       do n = nfu, nl
-          do m = mfu, ml
-             !
-             nm = kgrpnt(m,n)
-             !
-             do k = 1, kmax
-                !
-                if ( .not. amatp(nm,k,1) /= 0. ) then
-                   amatp(nm,k,:) =  0.
-                   amatp(nm,k,1) = -1.
-                   rhsp (nm,k  ) =  0.
-                endif
-                !
-             enddo
-             !
-          enddo
-       enddo
-       !
-       ! solve the Poisson equation
-       !
-       if ( qmax == 1 ) then
-          !
-          amat(:,1) = amatp(:,1,1)
-          amat(:,2) = amatp(:,1,2)
-          amat(:,3) = amatp(:,1,3)
-          amat(:,4) = amatp(:,1,6)
-          amat(:,5) = amatp(:,1,7)
-          call sip( amat, rhsp(1,1), dq(1,1) )
-          if (STPNOW()) return
-          !
-       else
-          !
-          if ( lprecon ) then
-             !
-!TIMG             call SWTSTA(296)
-             if ( icond == 1 ) then
-                !
-                ! compute incomplete LU factorization restricted to diagonal used as split preconditioner
-                !
-                call iluds ( amatp(1:mcgrd,1:qmax,1:nconct) )
-                !
-             else if ( icond == 2 ) then
-                !
-                ! compute incomplete LU factorization restricted to diagonal used as right preconditioner
-                !
-                call ilud ( amatp(1:mcgrd,1:qmax,1:nconct) )
-                !
-             else if ( icond == 3 ) then
-                !
-                ! compute classical incomplete LU factorization
-                !
-                call ilu ( amatp(1:mcgrd,1:qmax,1:nconct) )
-                !
-             endif
-!TIMG             call SWTSTO(296)
-             !
-          endif
-          !
-!TIMG          call SWTSTA(297)
-          call bicgstab ( amatp(1:mcgrd,1:qmax,1:nconct), rhsp(1:mcgrd,1:qmax), dq(1:mcgrd,1:qmax) )
-!TIMG          call SWTSTO(297)
-          if (STPNOW()) return
-          !
-       endif
-       !
-       ! exchange pressure corrections with neighbouring subdomains
-       !
-       call SWEXCHG ( dq(1:mcgrd,1:qmax), kgrpnt, 1, qmax )
-       if (STPNOW()) return
-       !
-       do k = qmax+1, kmax
-          !
-          dq(:,k) = dq(:,qmax)
-          !
-       enddo
+       goto 10
        !
     endif
     !
@@ -4835,8 +5702,6 @@ subroutine SwashImpLay2DHflow
        !
        do k = 0, kmax-1
           !
-          kd = max(k,1)
-          !
           do n = nfu, nl
              do m = mfu, ml
                 !
@@ -4844,7 +5709,7 @@ subroutine SwashImpLay2DHflow
                 !
                 if ( wets(nm) == 1 ) then
                    !
-                   if ( ihydro == 1 ) then
+                   if ( ihydro == 1 .and. presp(nm) == 0 ) then
                       !
                       do j = 0, kmax-1
                          !
@@ -4857,6 +5722,8 @@ subroutine SwashImpLay2DHflow
                       enddo
                       !
                    else
+                      !
+                      kd = max(k,1)
                       !
                       w1(nm,k) = w1(nm,k) - dt*theta3*( gmatw(nm,k+1,1)*dq(nm,kd) + gmatw(nm,k+1,2)*dq(nm,k+1) )
                       !
@@ -4891,6 +5758,16 @@ subroutine SwashImpLay2DHflow
                 !
                 w1(nm,kmax) = 0.25 * ( 3.*(u1(nm,kmax)+u1(nmd,kmax)) - u1(nm,kmax-1) - u1(nmd,kmax-1) ) * ( zku(nm,kmax) - zku(nmd,kmax) ) / dxl +  &
                               0.25 * ( 3.*(v1(nm,kmax)+v1(ndm,kmax)) - v1(nm,kmax-1) - v1(ndm,kmax-1) ) * ( zkv(nm,kmax) - zkv(ndm,kmax) ) / dyl
+                !
+             endif
+             !
+             if ( wets(nm) == 1 .and. presp(nm) == 1 ) then
+                !
+                dxl = 0.5 * ( gvv(nm) + gvv(ndm) )
+                dyl = 0.5 * ( guu(nm) + guu(nmd) )
+                !
+                w1(nm,0) = 0.25 * ( 3.*(u1(nm,1)+u1(nmd,1)) - u1(nm,2) - u1(nmd,2) ) * ( zku(nm,0) - zku(nmd,0) ) / dxl +  &
+                           0.25 * ( 3.*(v1(nm,1)+v1(ndm,1)) - v1(nm,2) - v1(ndm,2) ) * ( zkv(nm,0) - zkv(ndm,0) ) / dyl
                 !
              endif
              !
@@ -5205,11 +6082,14 @@ subroutine SwashImpLay2DHflow
                    kwu = 1.
                    if ( k == kmax ) kwu = 0.
                    !
+                   kwd = 1.
+                   if ( k == 1 .and. presp(nm) == 1 ) kwd = 0.
+                   !
                    if ( nm > 1 ) moutf = moutf + dmat(nm,k,2)*u1(nm ,k ) + dmat(nm,k, 4)*u1(nmd,k ) + dmat(nm,k, 1)*u1(nm ,kd) +  &
                                                  dmat(nm,k,3)*u1(nmd,kd) + dmat(nm,k, 5)*u1(nm ,ku) + dmat(nm,k, 6)*u1(nmd,ku) +  &
                                                  dmat(nm,k,8)*v1(nm ,k ) + dmat(nm,k,10)*v1(ndm,k ) + dmat(nm,k, 7)*v1(nm ,kd) +  &
                                                  dmat(nm,k,9)*v1(ndm,kd) + dmat(nm,k,11)*v1(nm ,ku) + dmat(nm,k,12)*v1(ndm,ku) +  &
-                                                 w1(nm,k-1) - kwu*w1(nm,k)
+                                                 kwd*w1(nm,k-1) - kwu*w1(nm,k)
                    !
                 enddo
                 !
@@ -5244,9 +6124,15 @@ subroutine SwashImpLay2DHflow
              nmd = kgrpnt(md,n )
              ndm = kgrpnt(m ,nd)
              !
-             if ( nm > 1 ) vol = vol + s1(nm)
-             !
-             if ( nm > 1 ) ener = ener + 0.5 * grav * (s1(nm)+dps(nm))**2 + 0.125 * (s1(nm)+dps(nm)) * ( (udep(nm)+udep(nmd))**2 + (vdep(nm)+vdep(ndm))**2 )
+             if ( nm > 1 ) then
+                !
+                if ( presp(nm) == 0 ) vol = vol + s1(nm)
+                !
+                fac = dps(nm) + min( -flos(nm), s1(nm) )
+                !
+                ener = ener + 0.5 * grav * fac**2 + 0.125 * fac * ( (udep(nm)+udep(nmd))**2 + (vdep(nm)+vdep(ndm))**2 )
+                !
+             endif
              !
           enddo
        enddo
@@ -5266,6 +6152,10 @@ subroutine SwashImpLay2DHflow
     zksnew(:,0) = s1(:)
     !
     work(:,1) = s1(:) + dps(:)
+    !
+    ! adapt water depth to include floating object
+    !
+    if ( ifloat /= 0 ) work(:,1) = min( dps(:)-flos(:), work(:,1) )
     !
     call sigmacoor ( zksnew, work )
     !
@@ -5301,10 +6191,10 @@ subroutine SwashImpLay2DHflow
                 !
                 if ( wets(nm) == 1 ) then
                    !
-                   wom(nm,k) = wom(nm,k+1) -      theta * ( hku(nm,k+1)*guu(nm)*u1(nm,k+1) - hku(nmd,k+1)*guu(nmd)*u1(nmd,k+1) +  &
-                                                            hkv(nm,k+1)*gvv(nm)*v1(nm,k+1) - hkv(ndm,k+1)*gvv(ndm)*v1(ndm,k+1) ) / gsqs(nm)  &
-                                           - (1.-theta) * ( hku(nm,k+1)*guu(nm)*u0(nm,k+1) - hku(nmd,k+1)*guu(nmd)*u0(nmd,k+1) +  &
-                                                            hkv(nm,k+1)*gvv(nm)*v0(nm,k+1) - hkv(ndm,k+1)*gvv(ndm)*v0(ndm,k+1) ) / gsqs(nm)  &
+                   wom(nm,k) = wom(nm,k+1) - (      tetau(nm)*hku(nm,k+1)*guu(nm)*u1(nm,k+1) -      tetau(nmd)*hku(nmd,k+1)*guu(nmd)*u1(nmd,k+1) +  &
+                                                    tetav(nm)*hkv(nm,k+1)*gvv(nm)*v1(nm,k+1) -      tetav(ndm)*hkv(ndm,k+1)*gvv(ndm)*v1(ndm,k+1) ) / gsqs(nm)  &
+                                           - ( (1.-tetau(nm))*hku(nm,k+1)*guu(nm)*u0(nm,k+1) - (1.-tetau(nmd))*hku(nmd,k+1)*guu(nmd)*u0(nmd,k+1) +  &
+                                               (1.-tetav(nm))*hkv(nm,k+1)*gvv(nm)*v0(nm,k+1) - (1.-tetav(ndm))*hkv(ndm,k+1)*gvv(ndm)*v0(ndm,k+1) ) / gsqs(nm)  &
                                            - ( hksnew(nm,k+1) - hks(nm,k+1) ) / dt
                    !
                 else
@@ -5416,10 +6306,10 @@ subroutine SwashImpLay2DHflow
                 !
                 do k = kmax-1, 0, -1
                    !
-                   wom(nm,k) = wom(nm,k+1) -      theta * ( hku(nm,k+1)*guu(nm)*u1(nm,k+1) - hku(nmd,k+1)*guu(nmd)*u1(nmd,k+1) +  &
-                                                            hkv(nm,k+1)*gvv(nm)*v1(nm,k+1) - hkv(ndm,k+1)*gvv(ndm)*v1(ndm,k+1) ) / gsqs(nm)  &
-                                           - (1.-theta) * ( hku(nm,k+1)*guu(nm)*u0(nm,k+1) - hku(nmd,k+1)*guu(nmd)*u0(nmd,k+1) +  &
-                                                            hkv(nm,k+1)*gvv(nm)*v0(nm,k+1) - hkv(ndm,k+1)*gvv(ndm)*v0(ndm,k+1) ) / gsqs(nm)  &
+                   wom(nm,k) = wom(nm,k+1) - (      tetau(nm)*hku(nm,k+1)*guu(nm)*u1(nm,k+1) -      tetau(nmd)*hku(nmd,k+1)*guu(nmd)*u1(nmd,k+1) +  &
+                                                    tetav(nm)*hkv(nm,k+1)*gvv(nm)*v1(nm,k+1) -      tetav(ndm)*hkv(ndm,k+1)*gvv(ndm)*v1(ndm,k+1) ) / gsqs(nm)  &
+                                           - ( (1.-tetau(nm))*hku(nm,k+1)*guu(nm)*u0(nm,k+1) - (1.-tetau(nmd))*hku(nmd,k+1)*guu(nmd)*u0(nmd,k+1) +  &
+                                               (1.-tetav(nm))*hkv(nm,k+1)*gvv(nm)*v0(nm,k+1) - (1.-tetav(ndm))*hkv(ndm,k+1)*gvv(ndm)*v0(ndm,k+1) ) / gsqs(nm)  &
                                            - ( hksnew(nm,k+1) - hks(nm,k+1) ) / dt
                    !
                 enddo
